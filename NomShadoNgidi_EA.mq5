@@ -791,7 +791,7 @@ bool TryStraightSell()
 // Trigger: bearish candle with wick above previous high; OR very long bullish → bearish
 // Entry  : market sell
 // SL     : 20–40 pips
-// TP     : 1hr short-term low or Asian low
+// TP     : 1hr short-term low (strictly)
 bool TrySellReversal()
 {
    bool bearishWick       = IsBearishCandle(1) &&
@@ -803,12 +803,6 @@ bool TrySellReversal()
    double entry = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double sl    = entry + PipsToPrice(InpSellRevSL);
    double tp    = GetSTLow(InpSTH_Lookback);
-
-   if(tp <= 0 || tp >= entry)
-   {
-      if(g_AsianLow > 0 && g_AsianLow < entry) tp = g_AsianLow;
-      else tp = entry - PipsToPrice(InpSellRevSL * InpMinRRR);
-   }
 
    if(tp <= 0 || tp >= entry) return false;
 
