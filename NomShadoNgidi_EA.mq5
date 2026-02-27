@@ -54,8 +54,7 @@ input double InpMinRRR         = 2.0;  // Minimum Risk:Reward Ratio (1:2 per pla
 
 input group "=== Stop Loss Settings ==="
 input int    InpFVGBuffer      = 3;    // SL buffer beyond FVG level (pips)
-input int    InpReversalSL     = 45;   // Reversal SL pips (after 10:00 AM)
-input int    InpReversalSLEarly= 30;   // Reversal SL pips (before 10:00 AM)
+input int    InpReversalSL     = 45;   // Buy Reversal SL pips (40-50 per plan)
 input int    InpStraightSL     = 35;   // Straight Buy/Sell SL pips (20-50 per plan)
 input int    InpSellRevSL      = 30;   // Sell Reversal SL pips (20-40 per plan)
 
@@ -665,24 +664,16 @@ bool TryStraightBuy()
 
 // Buy Reversal
 // Trigger: very long bearish candle (2× avg body) | any time in trading window
-// Entry  : market buy (next candle after the long bearish)
-// SL     : 40–50 pips if after 10AM; 30 pips before
-// TP     : 1hr short-term high or Asian high
+// Entry  : market buy on H1 close of the long bearish candle
+// SL     : 40–50 pips (fixed)
+// TP     : open of the second-to-last bearish candle (bar[2].open)
 bool TryBuyReversal()
 {
    if(!IsVeryLongBearishCandle(1)) return false;
 
-   double entry  = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   int    slPips = (CurrentHour() >= 10) ? InpReversalSL : InpReversalSLEarly;
-   double sl     = entry - PipsToPrice(slPips);
-   double tp     = GetSTHigh(InpSTH_Lookback);
-
-   // Fallback TP: Asian high, or minimum 2× SL if no structure found
-   if(tp <= entry)
-   {
-      if(g_AsianHigh > entry) tp = g_AsianHigh;
-      else tp = entry + PipsToPrice(slPips * InpMinRRR);
-   }
+   double entry = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double sl    = entry - PipsToPrice(InpReversalSL);
+   double tp    = iOpen(_Symbol, PERIOD_H1, 2); // Open of the second-to-last bearish candle
 
    if(tp <= entry) return false;
 
