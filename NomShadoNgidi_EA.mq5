@@ -760,15 +760,19 @@ bool TryFVGSell()
 // Straight Sell
 // Trigger: no Asian FVG | after 5AM | bearish formations | bearish close
 // Entry  : market sell on bearish H1 close
-// SL     : fixed pips (20–50 per plan)
+// SL     : above the wick (high) of the bearish candle + buffer;
+//          if that wick is very long (> InpStraightSL pips away), cap at 40 pip fixed SL
 // TP     : 1hr short-term low or Asian low
 bool TryStraightSell()
 {
    if(!BearishCandlesTillHour(InpLondonOpen)) return false;
    if(!IsBearishCandle(1) || !IsBearishCandle(2)) return false;
 
-   double entry = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   double sl    = entry + PipsToPrice(InpStraightSL);
+   double entry   = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double wickSL  = iHigh(_Symbol, PERIOD_H1, 1) + PipsToPrice(InpFVGBuffer);
+   double fixedSL = entry + PipsToPrice(InpStraightSL);
+   // Use wick SL unless the wick is very long — then cap at 40 pips
+   double sl      = (PriceToPips(wickSL - entry) > InpStraightSL) ? fixedSL : wickSL;
    double tp    = GetSTLow(InpSTH_Lookback);
 
    // Fallback TP: Asian low or minimum 2× SL
