@@ -581,7 +581,9 @@ bool ScanBuySetups()
       triggered = TryFVGBuy();
 
    // --- Priority 3: Straight Buy (after 5AM, bearish until London, then bullish close) ---
-   if(!triggered && !g_AsianFVGBullish && hr >= InpLondonOpen && hr < InpTradingEnd)
+   // Allowed even when there IS a bullish Asian FVG, provided the daily is NOT a reversal.
+   // Daily reversal check is manual — trader must confirm before session.
+   if(!triggered && hr >= InpLondonOpen && hr < InpTradingEnd)
       triggered = TryStraightBuy();
 
    // --- Priority 4: Buy Reversal (very long bearish candle at any time in window) ---
@@ -642,7 +644,8 @@ bool TryFVGBuy()
 }
 
 // Straight Buy
-// Trigger: no Asian FVG | after 5AM | bearish candles until London | bullish close
+// Trigger: after 5AM | bearish candles until London | bullish close
+// Note   : Asian FVG may or may not be present — allowed as long as daily is NOT a reversal
 // Entry  : market buy on bullish H1 close
 // SL     : below current bullish candle or previous candle (whichever is lower)
 // TP     : 1hr short-term high
