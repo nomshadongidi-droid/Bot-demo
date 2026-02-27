@@ -593,7 +593,7 @@ bool ScanBuySetups()
 
 // FVG Asian Buy
 // Trigger: bullish FVG in last Asian candle | 2–10AM
-// Entry  : buy limit at bottom of FVG gap (start of gap)
+// Entry  : market buy instantly on H1 candle close that forms the FVG
 // SL     : below candle before FVG; or Asian low if all candles bullish
 // TP     : 1hr short-term high
 bool TryFVGAsianBuy()
@@ -603,7 +603,7 @@ bool TryFVGAsianBuy()
    double zHigh, zLow;
    if(!GetFVGZone(g_AsianLastBar, zHigh, zLow)) return false;
 
-   double entry = zLow; // Buy limit at bottom of bullish FVG
+   double entry = SymbolInfoDouble(_Symbol, SYMBOL_ASK); // Market buy on FVG close
 
    // Candle before FVG = left candle of the 3-bar pattern
    double leftCandleLow = iLow(_Symbol, PERIOD_H1, g_AsianLastBar + 2);
@@ -621,7 +621,7 @@ bool TryFVGAsianBuy()
 
 // FVG Buy (no Asian FVG)
 // Trigger: downside violation occurred, then bullish FVG forms | 2–10AM
-// Entry  : buy limit at bottom of FVG (price expected to retrace back to gap)
+// Entry  : market buy instantly on H1 candle close that forms the FVG
 // SL     : below left candle of FVG (candle before the gap)
 // TP     : 1hr short-term high
 bool TryFVGBuy()
@@ -632,7 +632,7 @@ bool TryFVGBuy()
    double zHigh, zLow;
    if(!GetFVGZone(1, zHigh, zLow)) return false;
 
-   double entry = zLow;
+   double entry = SymbolInfoDouble(_Symbol, SYMBOL_ASK); // Market buy on FVG close
    // Left candle of FVG at bar[1] is bar[3]
    double sl = iLow(_Symbol, PERIOD_H1, 3) - PipsToPrice(InpFVGBuffer);
    double tp = GetSTHigh(InpSTH_Lookback);
@@ -716,7 +716,7 @@ bool ScanSellSetups()
 
 // FVG Asian Sell
 // Trigger: bearish FVG in last Asian candle | 2–10AM
-// Entry  : sell limit at top of FVG gap (start of gap)
+// Entry  : market sell instantly on H1 candle close that forms the FVG
 // SL     : above candle before FVG; or Asian high if all candles bearish
 // TP     : 1hr short-term low
 bool TryFVGAsianSell()
@@ -726,7 +726,7 @@ bool TryFVGAsianSell()
    double zHigh, zLow;
    if(!GetFVGZone(g_AsianLastBar, zHigh, zLow)) return false;
 
-   double entry = zHigh; // Sell limit at top of bearish FVG
+   double entry = SymbolInfoDouble(_Symbol, SYMBOL_BID); // Market sell on FVG close
 
    double leftCandleHigh = iHigh(_Symbol, PERIOD_H1, g_AsianLastBar + 2);
    double sl = leftCandleHigh + PipsToPrice(InpFVGBuffer);
@@ -743,7 +743,7 @@ bool TryFVGAsianSell()
 
 // FVG Sell (no Asian FVG)
 // Trigger: upside violation occurred, then bearish FVG forms | 2–10AM
-// Entry  : sell limit at top of FVG (price expected to return to gap)
+// Entry  : market sell instantly on H1 candle close that forms the FVG
 // SL     : above left candle of FVG
 // TP     : 1hr short-term low
 bool TryFVGSell()
@@ -754,7 +754,7 @@ bool TryFVGSell()
    double zHigh, zLow;
    if(!GetFVGZone(1, zHigh, zLow)) return false;
 
-   double entry = zHigh;
+   double entry = SymbolInfoDouble(_Symbol, SYMBOL_BID); // Market sell on FVG close
    // Left candle of FVG at bar[1] is bar[3]
    double sl = iHigh(_Symbol, PERIOD_H1, 3) + PipsToPrice(InpFVGBuffer);
    double tp = GetSTLow(InpSTH_Lookback);
