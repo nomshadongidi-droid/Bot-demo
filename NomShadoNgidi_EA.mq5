@@ -55,7 +55,7 @@ input double InpMinRRR         = 2.0;  // Minimum Risk:Reward Ratio (1:2 per pla
 input group "=== Stop Loss Settings ==="
 input int    InpFVGBuffer      = 3;    // SL buffer beyond FVG level (pips)
 input int    InpReversalSL     = 45;   // Buy Reversal SL pips (40-50 per plan)
-input int    InpStraightSL     = 35;   // Straight Buy/Sell SL pips (20-50 per plan)
+input int    InpStraightSL     = 40;   // Straight Sell SL pips (40 per plan)
 input int    InpSellRevSL      = 30;   // Sell Reversal SL pips (20-40 per plan)
 
 input group "=== Trade Settings ==="
