@@ -402,18 +402,50 @@ bool GetFVGZone(int startBar, double &zoneHigh, double &zoneLow)
 //  MARKET STRUCTURE UTILITIES
 //============================================================
 
+// Short-term high: the most recent level where a bullish body is immediately followed
+// by a bearish body — where bulls met bears. TP level = open of that bearish candle.
+// Must be above current ask. Falls back to highest high if no pattern found.
 double GetSTHigh(int lookback = 20)
 {
-   int lim = MathMin(lookback, iBars(_Symbol, PERIOD_H1) - 1);
+   int    lim = MathMin(lookback, iBars(_Symbol, PERIOD_H1) - 2);
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+
+   for(int i = 1; i <= lim; i++)
+   {
+      // bar[i+1] bullish → bar[i] bearish: bodies meeting at a high
+      if(IsBearishCandle(i) && IsBullishCandle(i + 1))
+      {
+         double level = iOpen(_Symbol, PERIOD_H1, i); // Open of bearish candle = meeting point
+         if(level > ask) return level;
+      }
+   }
+
+   // Fallback: highest high in lookback
    double h = 0;
    for(int i = 1; i <= lim; i++)
       h = MathMax(h, iHigh(_Symbol, PERIOD_H1, i));
    return h;
 }
 
+// Short-term low: the most recent level where a bearish body is immediately followed
+// by a bullish body — where bears met bulls. TP level = open of that bullish candle.
+// Must be below current bid. Falls back to lowest low if no pattern found.
 double GetSTLow(int lookback = 20)
 {
-   int lim = MathMin(lookback, iBars(_Symbol, PERIOD_H1) - 1);
+   int    lim = MathMin(lookback, iBars(_Symbol, PERIOD_H1) - 2);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+
+   for(int i = 1; i <= lim; i++)
+   {
+      // bar[i+1] bearish → bar[i] bullish: bodies meeting at a low
+      if(IsBullishCandle(i) && IsBearishCandle(i + 1))
+      {
+         double level = iOpen(_Symbol, PERIOD_H1, i); // Open of bullish candle = meeting point
+         if(level < bid) return level;
+      }
+   }
+
+   // Fallback: lowest low in lookback
    double l = DBL_MAX;
    for(int i = 1; i <= lim; i++)
       l = MathMin(l, iLow(_Symbol, PERIOD_H1, i));
