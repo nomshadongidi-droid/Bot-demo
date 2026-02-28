@@ -625,7 +625,7 @@ bool ScanBuySetups()
 // FVG Asian Buy
 // Trigger: bullish FVG in last Asian candle | 2–10AM
 // Entry  : market buy instantly on H1 candle close that forms the FVG
-// SL     : below candle before FVG; or Asian low if all candles bullish
+// SL     : below the low of the candle before the FVG formed (left candle)
 // TP     : 1hr short-term high
 bool TryFVGAsianBuy()
 {
@@ -636,13 +636,8 @@ bool TryFVGAsianBuy()
 
    double entry = SymbolInfoDouble(_Symbol, SYMBOL_ASK); // Market buy on FVG close
 
-   // Candle before FVG = left candle of the 3-bar pattern
-   double leftCandleLow = iLow(_Symbol, PERIOD_H1, g_AsianLastBar + 2);
-   double sl = leftCandleLow - PipsToPrice(InpFVGBuffer);
-
-   // If all Asian candles bullish → use Asian low as SL
-   if(g_AllAsianBullish && g_AsianLow > 0)
-      sl = MathMin(sl, g_AsianLow - PipsToPrice(InpFVGBuffer));
+   // SL = low of the candle immediately before the FVG formed (left candle of 3-bar pattern)
+   double sl = iLow(_Symbol, PERIOD_H1, g_AsianLastBar + 2) - PipsToPrice(InpFVGBuffer);
 
    double tp = GetSTHigh(InpSTH_Lookback);
    if(tp <= entry) return false;
@@ -741,7 +736,7 @@ bool ScanSellSetups()
 // FVG Asian Sell
 // Trigger: bearish FVG in last Asian candle | 2–10AM
 // Entry  : market sell instantly on H1 candle close that forms the FVG
-// SL     : above candle before FVG; or Asian high if all candles bearish
+// SL     : above the high of the candle before the FVG formed (left candle)
 // TP     : 1hr short-term low
 bool TryFVGAsianSell()
 {
@@ -752,12 +747,8 @@ bool TryFVGAsianSell()
 
    double entry = SymbolInfoDouble(_Symbol, SYMBOL_BID); // Market sell on FVG close
 
-   double leftCandleHigh = iHigh(_Symbol, PERIOD_H1, g_AsianLastBar + 2);
-   double sl = leftCandleHigh + PipsToPrice(InpFVGBuffer);
-
-   // If all Asian candles bearish → use Asian high as SL
-   if(g_AllAsianBearish && g_AsianHigh > 0)
-      sl = MathMax(sl, g_AsianHigh + PipsToPrice(InpFVGBuffer));
+   // SL = high of the candle immediately before the FVG formed (left candle of 3-bar pattern)
+   double sl = iHigh(_Symbol, PERIOD_H1, g_AsianLastBar + 2) + PipsToPrice(InpFVGBuffer);
 
    double tp = GetSTLow(InpSTH_Lookback);
    if(tp <= 0 || tp >= entry) return false;
