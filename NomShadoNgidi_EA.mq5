@@ -404,11 +404,10 @@ bool GetFVGZone(int startBar, double &zoneHigh, double &zoneLow)
 
 // Short-term high: the most recent level where a bullish body is immediately followed
 // by a bearish body — where bulls met bears. TP level = open of that bearish candle.
-// Must be above current ask. Falls back to highest high if no pattern found.
+// Must be ABOVE the Asian session high. Falls back to highest high if no pattern found.
 double GetSTHigh(int lookback = 20)
 {
-   int    lim = MathMin(lookback, iBars(_Symbol, PERIOD_H1) - 2);
-   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   int lim = MathMin(lookback, iBars(_Symbol, PERIOD_H1) - 2);
 
    for(int i = 1; i <= lim; i++)
    {
@@ -416,7 +415,7 @@ double GetSTHigh(int lookback = 20)
       if(IsBearishCandle(i) && IsBullishCandle(i + 1))
       {
          double level = iOpen(_Symbol, PERIOD_H1, i); // Open of bearish candle = meeting point
-         if(level > ask) return level;
+         if(level > g_AsianHigh) return level;
       }
    }
 
@@ -429,11 +428,10 @@ double GetSTHigh(int lookback = 20)
 
 // Short-term low: the most recent level where a bearish body is immediately followed
 // by a bullish body — where bears met bulls. TP level = open of that bullish candle.
-// Must be below current bid. Falls back to lowest low if no pattern found.
+// Must be BELOW the Asian session low. Falls back to lowest low if no pattern found.
 double GetSTLow(int lookback = 20)
 {
-   int    lim = MathMin(lookback, iBars(_Symbol, PERIOD_H1) - 2);
-   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   int lim = MathMin(lookback, iBars(_Symbol, PERIOD_H1) - 2);
 
    for(int i = 1; i <= lim; i++)
    {
@@ -441,7 +439,7 @@ double GetSTLow(int lookback = 20)
       if(IsBullishCandle(i) && IsBearishCandle(i + 1))
       {
          double level = iOpen(_Symbol, PERIOD_H1, i); // Open of bullish candle = meeting point
-         if(level < bid) return level;
+         if(level < g_AsianLow) return level;
       }
    }
 
