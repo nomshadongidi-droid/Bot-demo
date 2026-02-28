@@ -45,8 +45,8 @@ input int    InpNYtoServer     = 5;    // NY-to-Server offset (hours). EST=5, ED
 input int    InpAsianStartNY   = 19;   // Asian Session Start — NY time (plan: 19:00)
 input int    InpAsianEndNY     = 0;    // Asian Session End   — NY time (plan: 00:00)
 input int    InpLondonStartNY  = 2;    // London Kill Zone Start — NY time (plan: 02:00)
-input int    InpNYKillZoneNY   = 5;    // NY Kill Zone Start — NY time (plan: 05:00)
-input int    InpTradingEndNY   = 10;   // Trading Window End — NY time (plan: 10:00)
+input int    InpNYKillZoneNY   = 5;    // NY Kill Zone Start — NY time (plan: 05:00–10:00)
+input int    InpTradingEndNY   = 10;   // NY Kill Zone End / Trading Window End — NY time (plan: 10:00)
 
 input group "=== Risk Management ==="
 input double InpMinRRR         = 2.0;  // Minimum Risk:Reward Ratio (1:2 per plan)
@@ -107,10 +107,10 @@ int OnInit()
 
    PrintFormat("=== Nomshado Ngidi EA v1.0 Initialised ===");
    PrintFormat("Symbol: %s | Pip Size: %.5f", _Symbol, g_PipSize);
-   PrintFormat("Risk per trade: Account Balance / 6 | Min RRR 1:%.1f | Min SL: %d pips",
-               InpMinRRR, InpMinSLPips);
-   PrintFormat("Asian NY: %02d:00-%02d:00 | London KZ NY: %02d:00-%02d:00 | NY KZ after %02d:00",
-               InpAsianStartNY, InpAsianEndNY, InpLondonStartNY, InpNYKillZoneNY, InpNYKillZoneNY);
+   PrintFormat("Risk per trade: Account Balance / 6 | Min RRR 1:%.1f", InpMinRRR);
+   PrintFormat("Asian NY: %02d:00-%02d:00 | London KZ NY: %02d:00-%02d:00 | NY KZ NY: %02d:00-%02d:00",
+               InpAsianStartNY, InpAsianEndNY, InpLondonStartNY, InpNYKillZoneNY,
+               InpNYKillZoneNY, InpTradingEndNY);
    PrintFormat("NY-to-Server offset: +%d hrs | Max daily trades: %d",
                InpNYtoServer, InpMaxDailyTrades);
 
