@@ -37,22 +37,22 @@
 //  INPUT PARAMETERS
 //============================================================
 
-input group "=== Session Times (Server/GMT — adjust for your broker) ==="
-input int    InpAsianStart     = 0;    // Asian Session Start Hour (default: 00:00)
-input int    InpAsianEnd       = 5;    // Asian Session End Hour   (default: 05:00)
-input int    InpTradingStart   = 2;    // Trading Window Start Hour (default: 02:00)
-input int    InpTradingEnd     = 10;   // Trading Window End Hour   (default: 10:00)
-input int    InpLondonOpen     = 5;    // London Early Open Hour    (default: 05:00)
+// All session hours are in NEW YORK TIME.
+// Set InpNYtoServer = hours to add to NY time to reach your broker's server time.
+// Examples: NYC broker (EST) = 0 | GMT broker = 5 | GMT+2 broker = 7 | GMT+3 broker = 8
+input group "=== Session Times (New York Time) ==="
+input int    InpNYtoServer     = 5;    // NY-to-Server offset (hours). EST=5, EDT=4, GMT+2=7
+input int    InpAsianStartNY   = 19;   // Asian Session Start — NY time (plan: 19:00)
+input int    InpAsianEndNY     = 0;    // Asian Session End   — NY time (plan: 00:00)
+input int    InpLondonStartNY  = 2;    // London Kill Zone Start — NY time (plan: 02:00)
+input int    InpNYKillZoneNY   = 5;    // NY Kill Zone Start — NY time (plan: 05:00)
+input int    InpTradingEndNY   = 10;   // Trading Window End — NY time (plan: 10:00)
 
 input group "=== Risk Management ==="
-input double InpBaseRisk       = 1.0;  // Base Risk % per trade
-input double InpDD1Level       = 3.0;  // Drawdown Level 1 threshold (%)
-input double InpDD1Risk        = 0.5;  // Risk % when DD >= Level 1
-input double InpDD2Level       = 5.0;  // Drawdown Level 2 threshold (%)
-input double InpDD2Risk        = 0.25; // Risk % when DD >= Level 2
 input double InpMinRRR         = 2.0;  // Minimum Risk:Reward Ratio (1:2 per plan)
 
 input group "=== Stop Loss Settings ==="
+input int    InpMinSLPips      = 45;   // Minimum SL in pips (plan: 45 pips)
 input int    InpFVGBuffer      = 3;    // SL buffer beyond FVG level (pips)
 input int    InpReversalSL     = 45;   // Buy Reversal SL pips (40-50 per plan)
 input int    InpStraightSL     = 40;   // Straight Sell SL pips (40 per plan)
@@ -74,10 +74,6 @@ input bool   InpPushAlerts     = false;// Enable push notifications
 
 CTrade       trade;
 CPositionInfo pos;
-
-// Risk tracking
-double g_PeakBalance    = 0;
-double g_CurrentRisk    = 1.0;
 
 // Daily trade counter
 int      g_DailyCount   = 0;
@@ -110,16 +106,14 @@ int OnInit()
    trade.SetDeviationInPoints(20);
    trade.SetTypeFilling(ORDER_FILLING_FOK);
 
-   g_PeakBalance = AccountInfoDouble(ACCOUNT_BALANCE);
-
    PrintFormat("=== Nomshado Ngidi EA v1.0 Initialised ===");
    PrintFormat("Symbol: %s | Pip Size: %.5f", _Symbol, g_PipSize);
-   PrintFormat("Trading window: %02d:00 - %02d:00 | Asian: %02d:00 - %02d:00",
-               InpTradingStart, InpTradingEnd, InpAsianStart, InpAsianEnd);
-   PrintFormat("Base Risk: %.2f%% | Min RRR 1:%.1f | Max daily trades: %d",
-               InpBaseRisk, InpMinRRR, InpMaxDailyTrades);
-   PrintFormat("Drawdown rules: >%.0f%% → %.2f%% | >%.0f%% → %.2f%%",
-               InpDD1Level, InpDD1Risk, InpDD2Level, InpDD2Risk);
+   PrintFormat("Risk per trade: Account Balance / 6 | Min RRR 1:%.1f | Min SL: %d pips",
+               InpMinRRR, InpMinSLPips);
+   PrintFormat("Asian NY: %02d:00-%02d:00 | London KZ NY: %02d:00-%02d:00 | NY KZ after %02d:00",
+               InpAsianStartNY, InpAsianEndNY, InpLondonStartNY, InpNYKillZoneNY, InpNYKillZoneNY);
+   PrintFormat("NY-to-Server offset: +%d hrs | Max daily trades: %d",
+               InpNYtoServer, InpMaxDailyTrades);
 
    if(!InpAllowMonday)
       Print("Monday filter: ACTIVE (no trades on Mondays)");
@@ -146,7 +140,6 @@ void OnTick()
    s_LastBar = curBar;
 
    // --- Pre-trade guards ---
-   UpdateRiskLevel();
    ResetDailyCount();
 
    if(!InpAllowMonday && IsMonday())        return;
@@ -177,7 +170,10 @@ bool IsInTradingWindow()
 {
    MqlDateTime dt;
    TimeToStruct(TimeCurrent(), dt);
-   return (dt.hour >= InpTradingStart && dt.hour < InpTradingEnd);
+   int serverHour  = dt.hour;
+   int serverStart = NYtoServer(InpLondonStartNY);  // London KZ open = trading starts
+   int serverEnd   = NYtoServer(InpTradingEndNY);
+   return (serverHour >= serverStart && serverHour < serverEnd);
 }
 
 int CurrentHour()
@@ -186,6 +182,9 @@ int CurrentHour()
    TimeToStruct(TimeCurrent(), dt);
    return dt.hour;
 }
+
+// Returns the server hour that corresponds to the NY Kill Zone open
+int ServerNYKillZone() { return NYtoServer(InpNYKillZoneNY); }
 
 datetime TodayMidnight()
 {
@@ -196,25 +195,12 @@ datetime TodayMidnight()
 }
 
 //============================================================
-//  RISK MANAGEMENT
+//  TIME CONVERSION
+//  All session times are configured as New York time.
+//  NYtoServer() converts them to broker server time.
 //============================================================
 
-void UpdateRiskLevel()
-{
-   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-   if(balance > g_PeakBalance) g_PeakBalance = balance;
-
-   double dd = (g_PeakBalance > 0)
-               ? (g_PeakBalance - balance) / g_PeakBalance * 100.0
-               : 0.0;
-
-   if(dd >= InpDD2Level)
-      g_CurrentRisk = InpDD2Risk;
-   else if(dd >= InpDD1Level)
-      g_CurrentRisk = InpDD1Risk;
-   else
-      g_CurrentRisk = InpBaseRisk;
-}
+int NYtoServer(int nyHour) { return (nyHour + InpNYtoServer) % 24; }
 
 void ResetDailyCount()
 {
@@ -233,8 +219,9 @@ double CalcLotSize(double slPips)
 {
    if(slPips <= 0) return 0;
 
+   // Risk per trade = account balance / 6 (fixed plan rule)
    double balance  = AccountInfoDouble(ACCOUNT_BALANCE);
-   double riskAmt  = balance * (g_CurrentRisk / 100.0);
+   double riskAmt  = balance / 6.0;
    double tickVal  = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
    double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
 
@@ -291,7 +278,14 @@ void AnalyseAsianSession()
       if(bDay < today) break;    // Reached yesterday — stop
       if(bDay > today) continue; // Future bar — skip
 
-      if(bDt.hour >= InpAsianStart && bDt.hour < InpAsianEnd)
+      // Asian session: 19:00–00:00 NY, converted to server time
+      int sAsianStart = NYtoServer(InpAsianStartNY); // e.g. NY 19 + offset
+      int sAsianEnd   = NYtoServer(InpAsianEndNY);   // e.g. NY 00 + offset
+      bool inAsian    = (sAsianStart < sAsianEnd)
+                        ? (bDt.hour >= sAsianStart && bDt.hour < sAsianEnd)
+                        : (bDt.hour >= sAsianStart || bDt.hour < sAsianEnd); // handles wrap
+
+      if(inAsian)
       {
          foundAny = true;
          double bH = iHigh (_Symbol, PERIOD_H1, i);
@@ -305,8 +299,9 @@ void AnalyseAsianSession()
          if(bC <= bO) g_AllAsianBullish = false;
          if(bC >= bO) g_AllAsianBearish = false;
 
-         // Track the LAST (most recent) Asian session bar
-         if(bDt.hour == InpAsianEnd - 1)
+         // Track the LAST (most recent) Asian session bar = the bar just before session ends
+         int sAsianLast = (sAsianEnd - 1 + 24) % 24;
+         if(bDt.hour == sAsianLast)
             g_AsianLastBar = i;
       }
    }
@@ -526,6 +521,14 @@ bool PlaceBuy(double entry, double sl, double tp, string label)
    if(slPips <= 0 || tpPips <= 0)
    { PrintFormat("[%s] Invalid SL/TP (slPips=%.1f tpPips=%.1f)", label, slPips, tpPips); return false; }
 
+   // Enforce minimum SL — if calculated SL is less than minimum, widen it
+   if(slPips < InpMinSLPips)
+   {
+      PrintFormat("[%s] SL %.1f pips < minimum %d — widening to %d pips", label, slPips, InpMinSLPips, InpMinSLPips);
+      slPips = InpMinSLPips;
+      sl     = entry - PipsToPrice(slPips);
+   }
+
    if(tpPips / slPips < InpMinRRR)
    { PrintFormat("[%s] RRR %.2f below minimum %.1f — skipped", label, tpPips/slPips, InpMinRRR); return false; }
 
@@ -543,8 +546,8 @@ bool PlaceBuy(double entry, double sl, double tp, string label)
    if(ok)
    {
       g_DailyCount++;
-      string msg = StringFormat("✓ BUY [%s] Entry:%.5f SL:%.5f TP:%.5f Lots:%.2f Risk:%.2f%%",
-                                label, entry, sl, tp, lots, g_CurrentRisk);
+      string msg = StringFormat("✓ BUY [%s] Entry:%.5f SL:%.5f TP:%.5f Lots:%.2f Risk:Balance/6",
+                                label, entry, sl, tp, lots);
       Print(msg);
       if(InpPopupAlerts) Alert(msg);
       if(InpPushAlerts)  SendNotification(msg);
@@ -563,6 +566,14 @@ bool PlaceSell(double entry, double sl, double tp, string label)
    if(slPips <= 0 || tpPips <= 0)
    { PrintFormat("[%s] Invalid SL/TP (slPips=%.1f tpPips=%.1f)", label, slPips, tpPips); return false; }
 
+   // Enforce minimum SL — if calculated SL is less than minimum, widen it
+   if(slPips < InpMinSLPips)
+   {
+      PrintFormat("[%s] SL %.1f pips < minimum %d — widening to %d pips", label, slPips, InpMinSLPips, InpMinSLPips);
+      slPips = InpMinSLPips;
+      sl     = entry + PipsToPrice(slPips);
+   }
+
    if(tpPips / slPips < InpMinRRR)
    { PrintFormat("[%s] RRR %.2f below minimum %.1f — skipped", label, tpPips/slPips, InpMinRRR); return false; }
 
@@ -580,8 +591,8 @@ bool PlaceSell(double entry, double sl, double tp, string label)
    if(ok)
    {
       g_DailyCount++;
-      string msg = StringFormat("✓ SELL [%s] Entry:%.5f SL:%.5f TP:%.5f Lots:%.2f Risk:%.2f%%",
-                                label, entry, sl, tp, lots, g_CurrentRisk);
+      string msg = StringFormat("✓ SELL [%s] Entry:%.5f SL:%.5f TP:%.5f Lots:%.2f Risk:Balance/6",
+                                label, entry, sl, tp, lots);
       Print(msg);
       if(InpPopupAlerts) Alert(msg);
       if(InpPushAlerts)  SendNotification(msg);
@@ -598,25 +609,26 @@ bool PlaceSell(double entry, double sl, double tp, string label)
 
 bool ScanBuySetups()
 {
-   int hr = CurrentHour();
-   bool triggered = false;
+   int hr          = CurrentHour();
+   int sLondon     = NYtoServer(InpLondonStartNY);
+   int sNYKZ       = NYtoServer(InpNYKillZoneNY);
+   int sEnd        = NYtoServer(InpTradingEndNY);
+   bool triggered  = false;
 
-   // --- Priority 1: FVG Asian Buy (bullish FVG in last Asian candle) ---
-   if(!triggered && g_AsianFVGBullish && hr >= InpTradingStart && hr < InpTradingEnd)
+   // --- Priority 1: FVG Asian Buy (bullish FVG in last Asian candle) | London + NY KZ ---
+   if(!triggered && g_AsianFVGBullish && hr >= sLondon && hr < sEnd)
       triggered = TryFVGAsianBuy();
 
-   // --- Priority 2: FVG Buy (no Asian FVG → wait for violation + FVG) ---
-   if(!triggered && !g_AsianFVGBullish && hr >= InpTradingStart && hr < InpTradingEnd)
+   // --- Priority 2: FVG Buy (no Asian FVG → wait for violation + FVG) | London + NY KZ ---
+   if(!triggered && !g_AsianFVGBullish && hr >= sLondon && hr < sEnd)
       triggered = TryFVGBuy();
 
-   // --- Priority 3: Straight Buy (after 5AM, bearish until London, then bullish close) ---
-   // Allowed even when there IS a bullish Asian FVG, provided the daily is NOT a reversal.
-   // Daily reversal check is manual — trader must confirm before session.
-   if(!triggered && hr >= InpLondonOpen && hr < InpTradingEnd)
+   // --- Priority 3: Straight Buy | NY Kill Zone only (after 05:00 NY) ---
+   if(!triggered && hr >= sNYKZ && hr < sEnd)
       triggered = TryStraightBuy();
 
-   // --- Priority 4: Buy Reversal (very long bearish candle at any time in window) ---
-   if(!triggered && hr >= InpTradingStart && hr < InpTradingEnd)
+   // --- Priority 4: Buy Reversal | London + NY KZ ---
+   if(!triggered && hr >= sLondon && hr < sEnd)
       triggered = TryBuyReversal();
 
    return triggered;
@@ -711,23 +723,26 @@ bool TryBuyReversal()
 
 bool ScanSellSetups()
 {
-   int hr = CurrentHour();
-   bool triggered = false;
+   int hr          = CurrentHour();
+   int sLondon     = NYtoServer(InpLondonStartNY);
+   int sNYKZ       = NYtoServer(InpNYKillZoneNY);
+   int sEnd        = NYtoServer(InpTradingEndNY);
+   bool triggered  = false;
 
-   // --- Priority 1: FVG Asian Sell (bearish FVG in last Asian candle) ---
-   if(!triggered && g_AsianFVGBearish && hr >= InpTradingStart && hr < InpTradingEnd)
+   // --- Priority 1: FVG Asian Sell (bearish FVG in last Asian candle) | London + NY KZ ---
+   if(!triggered && g_AsianFVGBearish && hr >= sLondon && hr < sEnd)
       triggered = TryFVGAsianSell();
 
-   // --- Priority 2: FVG Sell (no Asian FVG → upside violation + bearish FVG) ---
-   if(!triggered && !g_AsianFVGBearish && hr >= InpTradingStart && hr < InpTradingEnd)
+   // --- Priority 2: FVG Sell (no Asian FVG → upside violation + bearish FVG) | London + NY KZ ---
+   if(!triggered && !g_AsianFVGBearish && hr >= sLondon && hr < sEnd)
       triggered = TryFVGSell();
 
-   // --- Priority 3: Straight Sell (after 5AM, bearish formations, bearish close) ---
-   if(!triggered && !g_AsianFVGBearish && hr >= InpLondonOpen && hr < InpTradingEnd)
+   // --- Priority 3: Straight Sell | NY Kill Zone only (after 05:00 NY) ---
+   if(!triggered && !g_AsianFVGBearish && hr >= sNYKZ && hr < sEnd)
       triggered = TryStraightSell();
 
-   // --- Priority 4: Sell Reversal / Bearish Wick (any time in window) ---
-   if(!triggered && hr >= InpTradingStart && hr < InpTradingEnd)
+   // --- Priority 4: Sell Reversal | London + NY KZ ---
+   if(!triggered && hr >= sLondon && hr < sEnd)
       triggered = TrySellReversal();
 
    return triggered;
