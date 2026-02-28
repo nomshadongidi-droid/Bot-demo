@@ -52,7 +52,6 @@ input group "=== Risk Management ==="
 input double InpMinRRR         = 2.0;  // Minimum Risk:Reward Ratio (1:2 per plan)
 
 input group "=== Stop Loss Settings ==="
-input int    InpMinSLPips      = 45;   // Minimum SL in pips (plan: 45 pips)
 input int    InpFVGBuffer      = 3;    // SL buffer beyond FVG level (pips)
 input int    InpReversalSL     = 45;   // Buy Reversal SL pips (40-50 per plan)
 input int    InpStraightSL     = 40;   // Straight Sell SL pips (40 per plan)
@@ -228,8 +227,14 @@ double CalcLotSize(double slPips)
    double minLot  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    double maxLot  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
 
+   // Round down to nearest broker step, then clamp to broker min/max.
+   // If rounding produces 0 we still use minLot so the trade is never
+   // blocked purely because of leverage / lot-size constraints.
    lots = MathFloor(lots / step) * step;
    lots = MathMax(minLot, MathMin(maxLot, lots));
+
+   PrintFormat("CalcLotSize: balance=%.2f risk=%.2f SL=%.1f pips → lots=%.2f (min=%.2f max=%.2f)",
+               balance, balance / 6.0, slPips, lots, minLot, maxLot);
    return lots;
 }
 
@@ -515,14 +520,6 @@ bool PlaceBuy(double entry, double sl, double tp, string label)
    if(slPips <= 0 || tpPips <= 0)
    { PrintFormat("[%s] Invalid SL/TP (slPips=%.1f tpPips=%.1f)", label, slPips, tpPips); return false; }
 
-   // Enforce minimum SL — if calculated SL is less than minimum, widen it
-   if(slPips < InpMinSLPips)
-   {
-      PrintFormat("[%s] SL %.1f pips < minimum %d — widening to %d pips", label, slPips, InpMinSLPips, InpMinSLPips);
-      slPips = InpMinSLPips;
-      sl     = entry - PipsToPrice(slPips);
-   }
-
    if(tpPips / slPips < InpMinRRR)
    { PrintFormat("[%s] RRR %.2f below minimum %.1f — skipped", label, tpPips/slPips, InpMinRRR); return false; }
 
@@ -559,14 +556,6 @@ bool PlaceSell(double entry, double sl, double tp, string label)
 
    if(slPips <= 0 || tpPips <= 0)
    { PrintFormat("[%s] Invalid SL/TP (slPips=%.1f tpPips=%.1f)", label, slPips, tpPips); return false; }
-
-   // Enforce minimum SL — if calculated SL is less than minimum, widen it
-   if(slPips < InpMinSLPips)
-   {
-      PrintFormat("[%s] SL %.1f pips < minimum %d — widening to %d pips", label, slPips, InpMinSLPips, InpMinSLPips);
-      slPips = InpMinSLPips;
-      sl     = entry + PipsToPrice(slPips);
-   }
 
    if(tpPips / slPips < InpMinRRR)
    { PrintFormat("[%s] RRR %.2f below minimum %.1f — skipped", label, tpPips/slPips, InpMinRRR); return false; }
