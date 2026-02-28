@@ -144,7 +144,8 @@ void OnTick()
    if(!InpAllowMonday && IsMonday())        return;
    if(g_DailyCount >= InpMaxDailyTrades)    return;
    if(!IsInTradingWindow())                 return;
-   if(HasOpenPosition())                    return;
+   // No HasOpenPosition() block — a carry-over trade from a previous day
+   // does not prevent opening up to InpMaxDailyTrades new trades today.
 
    // Build Asian session context for today
    AnalyseAsianSession();
