@@ -219,20 +219,14 @@ double CalcLotSize(double slPips)
 {
    if(slPips <= 0) return 0;
 
-   // Risk per trade = account balance / 6 (fixed plan rule)
-   double balance  = AccountInfoDouble(ACCOUNT_BALANCE);
-   double riskAmt  = balance / 6.0;
-   double tickVal  = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
-   double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   // Plan formula: lots = (balance / 6) / slPips / 10
+   // Example: balance=$600 → risk=$100 | SL=50 pips → $100/50=2 → 2/10=0.2 lots
+   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   double lots    = (balance / 6.0) / slPips / 10.0;
 
-   if(tickVal <= 0 || tickSize <= 0) return 0;
-
-   double pipVal = (tickVal / tickSize) * g_PipSize;
-   double lots   = riskAmt / (slPips * pipVal);
-
-   double step   = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
-   double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
-   double maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+   double step    = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   double minLot  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double maxLot  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
 
    lots = MathFloor(lots / step) * step;
    lots = MathMax(minLot, MathMin(maxLot, lots));
