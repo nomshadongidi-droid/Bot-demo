@@ -479,6 +479,24 @@ bool IsVeryLongBullishCandle(int bar)
    return IsBullishCandle(bar) && body > AvgBodySize() * 2.0;
 }
 
+// Daily buy reversal pattern: last completed Daily candle is a very long bearish candle (≥ 2× avg D1 body).
+// This signals a potential bullish reversal on the higher timeframe.
+bool IsDailyBuyReversalPattern()
+{
+   int d1Bars = iBars(_Symbol, PERIOD_D1);
+   if(d1Bars < 22) return false; // need enough history
+
+   double avgBody = 0;
+   for(int i = 2; i < 22; i++)
+      avgBody += MathAbs(iClose(_Symbol, PERIOD_D1, i) - iOpen(_Symbol, PERIOD_D1, i));
+   avgBody /= 20.0;
+
+   double d1Body = iOpen(_Symbol, PERIOD_D1, 1) - iClose(_Symbol, PERIOD_D1, 1);
+   bool d1Bearish = iClose(_Symbol, PERIOD_D1, 1) < iOpen(_Symbol, PERIOD_D1, 1);
+
+   return d1Bearish && d1Body > avgBody * 2.0;
+}
+
 // Checks that ALL H1 candles between TradingStart and the given endHour are bearish
 bool BearishCandlesTillHour(int endHour)
 {
@@ -626,6 +644,7 @@ bool ScanBuySetups()
 bool TryFVGAsianBuy()
 {
    if(g_AsianLastBar < 0) return false;
+   if(!IsDailyBuyReversalPattern()) return false; // Daily must show a buy reversal candle
 
    double zHigh, zLow;
    if(!GetFVGZone(g_AsianLastBar, zHigh, zLow)) return false;
