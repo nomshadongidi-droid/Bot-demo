@@ -637,9 +637,9 @@ bool ScanBuySetups()
 }
 
 // FVG Asian Buy
-// Trigger: bullish FVG in last Asian candle | 2–10AM
+// Trigger: bullish FVG in last Asian candle | 2–10AM | Daily buy reversal confirmed
 // Entry  : market buy instantly on H1 candle close that forms the FVG
-// SL     : below the low of the candle before the FVG formed (left candle)
+// SL     : below the lowest point of the Asian session range
 // TP     : 1hr short-term high
 bool TryFVGAsianBuy()
 {
@@ -651,8 +651,8 @@ bool TryFVGAsianBuy()
 
    double entry = SymbolInfoDouble(_Symbol, SYMBOL_ASK); // Market buy on FVG close
 
-   // SL = low of the candle immediately before the FVG formed (left candle of 3-bar pattern)
-   double sl = iLow(_Symbol, PERIOD_H1, g_AsianLastBar + 2) - PipsToPrice(InpFVGBuffer);
+   // SL = lowest point of the Asian session range minus buffer
+   double sl = g_AsianLow - PipsToPrice(InpFVGBuffer);
 
    double tp = GetSTHigh(InpSTH_Lookback);
    if(tp <= entry) return false;
