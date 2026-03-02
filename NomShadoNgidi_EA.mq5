@@ -37,10 +37,11 @@
 //  INPUT PARAMETERS
 //============================================================
 
-// All session hours are in UTC-5 (New York / Eastern Standard Time).
-// The EA reads TimeGMT() and subtracts 5 hours — broker server time is irrelevant.
-// Note: during US Daylight Saving Time (EDT = UTC-4) you may need to shift hours by 1.
-input group "=== Session Times (UTC-5 / New York Time) ==="
+// All session hours are in Eastern Time (ET) — DST is handled automatically.
+//   • EST (UTC-5): first Sunday of November → second Sunday of March
+//   • EDT (UTC-4): second Sunday of March   → first Sunday of November
+// Uses TimeGMT() so broker server timezone is completely irrelevant.
+input group "=== Session Times (Eastern Time — auto DST) ==="
 input int    InpAsianStartNY   = 19;   // Asian Session Start — UTC-5 (plan: 19:00)
 input int    InpAsianEndNY     = 0;    // Asian Session End   — NY time (plan: 00:00)
 input int    InpLondonStartNY  = 2;    // London Kill Zone Start — NY time (plan: 02:00)
@@ -112,8 +113,8 @@ int OnInit()
    PrintFormat("Asian NY: %02d:00-%02d:00 | London KZ NY: %02d:00-%02d:00 | NY KZ NY: %02d:00-%02d:00",
                InpAsianStartNY, InpAsianEndNY, InpLondonStartNY, InpNYKillZoneNY,
                InpNYKillZoneNY, InpTradingEndNY);
-   PrintFormat("Time base: UTC-5 (NY/EST) via TimeGMT()-5h | Max daily trades: %d",
-               InpMaxDailyTrades);
+   PrintFormat("Time base: Eastern Time (auto DST) — now %s (UTC%d) | Max daily trades: %d",
+               EasternOffset() == -4 ? "EDT" : "EST", EasternOffset(), InpMaxDailyTrades);
 
    if(!InpAllowMonday)
       Print("Monday filter: ACTIVE (no trades on Mondays)");
@@ -167,18 +168,55 @@ void OnTick()
 }
 
 //============================================================
-//  TIME HELPERS — all based on UTC-5 (New York / Eastern Standard Time)
-//  Uses TimeGMT() from MT5 so broker server timezone is irrelevant.
+//  TIME HELPERS — Eastern Time with automatic US DST
+//  Uses TimeGMT() so broker server timezone is irrelevant.
 //============================================================
 
-// Current UTC-5 datetime
-datetime NowNY() { return TimeGMT() - 5 * 3600; }
+// Day-of-week for any calendar date (Tomohiko Sakamoto). 0=Sun … 6=Sat.
+int DayOfWeekFor(int year, int mon, int day)
+{
+   static int t[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
+   if(mon < 3) year--;
+   return (year + year/4 - year/100 + year/400 + t[mon-1] + day) % 7;
+}
 
-// Convert any server-time bar timestamp to UTC-5
+// Returns the Eastern UTC offset: -4 (EDT/summer) or -5 (EST/winter).
+// DST starts: 2nd Sunday of March  at 07:00 UTC (= 2:00 AM EST → spring forward)
+// DST ends  : 1st Sunday of November at 06:00 UTC (= 2:00 AM EDT → fall back)
+int EasternOffset()
+{
+   MqlDateTime u;
+   TimeToStruct(TimeGMT(), u);
+
+   // 2nd Sunday of March
+   int dowMar1      = DayOfWeekFor(u.year, 3, 1);
+   int marchSun2    = 1 + (7 - dowMar1) % 7 + 7; // day-of-month, range 8–14
+
+   // 1st Sunday of November
+   int dowNov1      = DayOfWeekFor(u.year, 11, 1);
+   int novSun1      = 1 + (7 - dowNov1) % 7;      // day-of-month, range 1–7
+
+   // Is UTC now past the DST-start transition?
+   bool pastStart = (u.mon >  3) ||
+                    (u.mon == 3 && u.day >  marchSun2) ||
+                    (u.mon == 3 && u.day == marchSun2 && u.hour >= 7);
+
+   // Is UTC now before the DST-end transition?
+   bool beforeEnd = (u.mon <  11) ||
+                    (u.mon == 11 && u.day <  novSun1) ||
+                    (u.mon == 11 && u.day == novSun1 && u.hour < 6);
+
+   return (pastStart && beforeEnd) ? -4 : -5; // EDT or EST
+}
+
+// Current Eastern Time datetime (auto DST)
+datetime NowNY() { return TimeGMT() + EasternOffset() * 3600; }
+
+// Convert any server-time bar timestamp to Eastern Time (auto DST)
 datetime BarTimeNY(int barIndex)
 {
    int serverOffsetSecs = (int)((datetime)TimeCurrent() - (datetime)TimeGMT());
-   return iTime(_Symbol, PERIOD_H1, barIndex) - serverOffsetSecs - 5 * 3600;
+   return iTime(_Symbol, PERIOD_H1, barIndex) - serverOffsetSecs + EasternOffset() * 3600;
 }
 
 bool IsMonday()
@@ -211,8 +249,8 @@ datetime TodayMidnight()
 }
 
 //============================================================
-//  NYtoServer — identity: session times are already in UTC-5,
-//  no broker offset needed.
+//  NYtoServer — identity: session times are entered as Eastern Time.
+//  EasternOffset() already applied in NowNY()/BarTimeNY(); no further conversion needed.
 //============================================================
 
 int NYtoServer(int nyHour) { return nyHour; }
