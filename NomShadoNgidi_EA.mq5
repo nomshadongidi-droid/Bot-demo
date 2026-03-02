@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 //
 //  SETUP MODELS IMPLEMENTED:
-//  BUY  → FVG Asian Buy | FVG Buy | Straight Buy | Buy Reversal
+//  BUY  → FVG Asian Buy | FVG Buy | Straight Buy
 //  SELL → FVG Asian Sell | FVG Sell | Straight Sell | Sell Reversal
 //
 //  MANUAL TASKS (cannot be automated — trader must do these):
@@ -27,7 +27,7 @@
 #property copyright   "Nomshado Ngidi"
 #property version     "1.00"
 #property description "MT5 EA — Nomshado Ngidi Trading Plan Q1 2025"
-#property description "Setups: FVG Buy/Sell, Asian FVG, Straight, Reversal"
+#property description "Setups: FVG Buy/Sell, Asian FVG, Straight"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
@@ -53,7 +53,6 @@ input double InpMinRRR         = 2.0;  // Minimum Risk:Reward Ratio (1:2 per pla
 
 input group "=== Stop Loss Settings ==="
 input int    InpFVGBuffer      = 3;    // SL buffer beyond FVG level (pips)
-input int    InpReversalSL     = 45;   // Buy Reversal SL pips (40-50 per plan)
 input int    InpStraightSL     = 40;   // Straight Sell SL pips (40 per plan)
 input int    InpSellRevSL      = 30;   // Sell Reversal SL pips (20-40 per plan)
 
@@ -629,10 +628,6 @@ bool ScanBuySetups()
    if(!triggered && hr >= sNYKZ && hr < sEnd)
       triggered = TryStraightBuy();
 
-   // --- Priority 4: Buy Reversal | London + NY KZ ---
-   if(!triggered && hr >= sLondon && hr < sEnd)
-      triggered = TryBuyReversal();
-
    return triggered;
 }
 
@@ -700,24 +695,6 @@ bool TryStraightBuy()
    if(tp <= entry) return false;
 
    return PlaceBuy(entry, sl, tp, "Straight_Buy");
-}
-
-// Buy Reversal
-// Trigger: very long bearish candle (2× avg body) | any time in trading window
-// Entry  : market buy on H1 close of the long bearish candle
-// SL     : 40–50 pips (fixed)
-// TP     : open of the second-to-last bearish candle (bar[2].open)
-bool TryBuyReversal()
-{
-   if(!IsVeryLongBearishCandle(1)) return false;
-
-   double entry = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   double sl    = entry - PipsToPrice(InpReversalSL);
-   double tp    = iOpen(_Symbol, PERIOD_H1, 2); // Open of the second-to-last bearish candle
-
-   if(tp <= entry) return false;
-
-   return PlaceBuy(entry, sl, tp, "Buy_Reversal");
 }
 
 //============================================================
