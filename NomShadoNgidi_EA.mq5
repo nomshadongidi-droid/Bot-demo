@@ -6,7 +6,7 @@
 //
 //  SETUP MODELS IMPLEMENTED:
 //  BUY  → FVG Asian Buy | FVG Buy | Straight Buy
-//  SELL → FVG Asian Sell | FVG Sell | Straight Sell | Sell Reversal
+//  SELL → FVG Asian Sell | FVG Sell | Bearish Continuation | Straight Sell
 //
 //  MANUAL TASKS (cannot be automated — trader must do these):
 //  • Check DXY for directional confluence each session
@@ -803,14 +803,14 @@ bool ScanSellSetups()
    if(!triggered && !g_AsianFVGBearish && hr >= sLondon && hr <= sEnd)
       triggered = TryFVGSell();
 
-   // --- Priority 3: Straight Sell | NY Kill Zone only (05:00–10:00 NY) ---
+   // --- Priority 3: Bearish Continuation | NY Kill Zone only (05:00–10:00 NY) ---
    if(!triggered && !g_AsianFVGBearish && hr >= sNYKZ && hr < sEnd)
-      triggered = TryStraightSell();
+      triggered = TryBearishContinuationSell();
 
-   // --- Priority 4: Sell Reversal | NY session start onwards (05:00–10:00 NY incl.) ---
+   // --- Priority 4: Straight Sell (Bearish Wick) | NY session start onwards (05:00–10:00 NY incl.) ---
    // Allow re-entry: no single-fire guard — setup can retrigger on a new valid bar
    if(!triggered && hr >= sNYKZ && hr <= sEnd)
-      triggered = TrySellReversal();
+      triggered = TryStraightSell();
 
    return triggered;
 }
@@ -889,13 +889,13 @@ bool TryFVGSell()
    return ok;
 }
 
-// Straight Sell
+// Bearish Continuation
 // Trigger: no Asian FVG | after 5AM | bearish formations | bearish close
 // Entry  : market sell on bearish H1 close
 // SL     : above the wick (high) of the bearish candle + buffer;
 //          if that wick is very long (> InpStraightSL pips away), cap at 40 pip fixed SL
 // TP     : 1hr short-term low or Asian low
-bool TryStraightSell()
+bool TryBearishContinuationSell()
 {
    if(!BearishCandlesTillHour(InpLondonOpen)) return false;
    if(!IsBearishCandle(1) || !IsBearishCandle(2)) return false;
@@ -916,10 +916,10 @@ bool TryStraightSell()
 
    if(tp <= 0 || tp >= entry) return false;
 
-   return PlaceSell(entry, sl, tp, "Straight_Sell");
+   return PlaceSell(entry, sl, tp, "Bearish_Continuation");
 }
 
-// Sell Reversal (Bearish Wick) — ALLOW RE-ENTRY
+// Straight Sell (Bearish Wick) — ALLOW RE-ENTRY
 // Window : 05:00–10:00 AM NY (start of NY session)
 // Trigger: Prior bullish candle formations, then bar[1] closes bearish with a wick
 //          above bar[2]'s high (market execution on close).
@@ -929,7 +929,7 @@ bool TryStraightSell()
 //          — covers both the wick tip (simple case) and the prior spike high (news case)
 // TP     : 1hr short-term low.
 //          If all Asian candles were strong bearish, use Asian session low as TP.
-bool TrySellReversal()
+bool TryStraightSell()
 {
    // Core condition: bar[1] closes bearish with a wick above bar[2]'s high
    if(!IsBearishCandle(1)) return false;
@@ -954,7 +954,7 @@ bool TrySellReversal()
 
    if(tp <= 0 || tp >= entry) return false;
 
-   return PlaceSell(entry, sl, tp, "Sell_Reversal");
+   return PlaceSell(entry, sl, tp, "Straight_Sell");
 }
 
 //+------------------------------------------------------------------+
