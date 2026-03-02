@@ -90,6 +90,9 @@ bool     g_AllAsianBearish  = false;
 int      g_AsianLastBar     = -1;
 datetime g_AsianDate        = 0;
 
+// Per-day reenter guards
+bool     g_FVGSellDone      = false; // Do not reenter after first FVG Sell fires
+
 //============================================================
 //  INITIALISATION
 //============================================================
@@ -206,8 +209,9 @@ void ResetDailyCount()
    datetime today = TodayMidnight();
    if(today != g_LastDay)
    {
-      g_DailyCount = 0;
-      g_LastDay    = today;
+      g_DailyCount   = 0;
+      g_LastDay      = today;
+      g_FVGSellDone  = false;
    }
 }
 
@@ -713,8 +717,8 @@ bool ScanSellSetups()
    if(!triggered && g_AsianFVGBearish && hr >= sLondon && hr < sEnd)
       triggered = TryFVGAsianSell();
 
-   // --- Priority 2: FVG Sell (no Asian FVG → upside violation + bearish FVG) | London + NY KZ ---
-   if(!triggered && !g_AsianFVGBearish && hr >= sLondon && hr < sEnd)
+   // --- Priority 2: FVG Sell (no Asian FVG → upside violation + bearish FVG) | 2AM–10AM incl. ---
+   if(!triggered && !g_AsianFVGBearish && hr >= sLondon && hr <= sEnd)
       triggered = TryFVGSell();
 
    // --- Priority 3: Straight Sell | NY Kill Zone only (after 05:00 NY) ---
@@ -751,26 +755,37 @@ bool TryFVGAsianSell()
    return PlaceSell(entry, sl, tp, "FVG_Asian_Sell");
 }
 
-// FVG Sell (no Asian FVG)
-// Trigger: upside violation occurred, then bearish FVG forms | 2–10AM
-// Entry  : market sell instantly on H1 candle close that forms the FVG
-// SL     : above left candle of FVG
-// TP     : 1hr short-term low
+// FVG Sell (no Asian FVG) — DO NOT REENTER
+// Pre-checks : 2AM–10AM (inclusive) | upside violation of Asian range | bearish FVG formed
+// Entry      : market sell on close of the FVG candle (bar[1])
+// SL         : above the high of the candle before the FVG (bar[3]) + buffer
+// TP         : 1hr short-term low.
+//              Exception — if ALL Asian candles were bullish, TP = lowest point of Asian range.
 bool TryFVGSell()
 {
-   if(!HasUpsideViolation()) return false;
-   if(DetectFVG(1) != -1)    return false;
+   if(g_FVGSellDone)           return false; // No reenter after first signal today
+   if(!HasUpsideViolation())   return false;
+   if(DetectFVG(1) != -1)      return false;
 
    double zHigh, zLow;
    if(!GetFVGZone(1, zHigh, zLow)) return false;
 
-   double entry = SymbolInfoDouble(_Symbol, SYMBOL_BID); // Market sell on FVG close
-   // Left candle of FVG at bar[1] is bar[3]
+   double entry = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   // SL above the left candle of the FVG (bar[3] in the 3-bar pattern)
    double sl = iHigh(_Symbol, PERIOD_H1, 3) + PipsToPrice(InpFVGBuffer);
-   double tp = GetSTLow(InpSTH_Lookback);
+
+   // TP: if all Asian candles were bullish, use the Asian range low; else use ST low
+   double tp;
+   if(g_AllAsianBullish && g_AsianLow > 0 && g_AsianLow < entry)
+      tp = g_AsianLow;
+   else
+      tp = GetSTLow(InpSTH_Lookback);
+
    if(tp <= 0 || tp >= entry) return false;
 
-   return PlaceSell(entry, sl, tp, "FVG_Sell");
+   bool ok = PlaceSell(entry, sl, tp, "FVG_Sell");
+   if(ok) g_FVGSellDone = true;
+   return ok;
 }
 
 // Straight Sell
