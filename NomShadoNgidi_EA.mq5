@@ -90,8 +90,10 @@ bool     g_AllAsianBearish  = false;
 int      g_AsianLastBar     = -1;
 datetime g_AsianDate        = 0;
 
-// Per-day reenter guards
-bool     g_FVGSellDone      = false; // Do not reenter after first FVG Sell fires
+// Per-day setup guards
+bool     g_FVGSellDone        = false; // FVG Sell: do not reenter after first signal
+bool     g_AsianSellSLHit     = false; // FVG Asian Sell closed at SL loss today
+bool     g_AsianSellReentered = false; // Re-entry buy already placed after Asian Sell SL
 
 //============================================================
 //  INITIALISATION
@@ -143,6 +145,9 @@ void OnTick()
    // --- Pre-trade guards ---
    ResetDailyCount();
 
+   // Monitor FVG Asian Sell position for SL hit (runs every bar, outside trading window)
+   CheckAsianSellSLReentry();
+
    if(!InpAllowMonday && IsMonday())        return;
    if(g_DailyCount >= InpMaxDailyTrades)    return;
    if(!IsInTradingWindow())                 return;
@@ -151,6 +156,13 @@ void OnTick()
 
    // Build Asian session context for today
    AnalyseAsianSession();
+
+   // Re-entry buy triggered by FVG Asian Sell SL hit — takes priority this bar
+   if(g_AsianSellSLHit && !g_AsianSellReentered)
+   {
+      TryAsianSellReentryBuy();
+      return;
+   }
 
    // Scan buy setups first; if nothing triggers, scan sells
    if(!ScanBuySetups())
@@ -209,9 +221,11 @@ void ResetDailyCount()
    datetime today = TodayMidnight();
    if(today != g_LastDay)
    {
-      g_DailyCount   = 0;
-      g_LastDay      = today;
-      g_FVGSellDone  = false;
+      g_DailyCount          = 0;
+      g_LastDay             = today;
+      g_FVGSellDone         = false;
+      g_AsianSellSLHit      = false;
+      g_AsianSellReentered  = false;
    }
 }
 
@@ -588,10 +602,12 @@ bool PlaceSell(double entry, double sl, double tp, string label)
    bool ok = false;
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
 
-   if(entry >= bid - PipsToPrice(2.0))
-      ok = trade.Sell(lots, _Symbol, 0, sl, tp, label);
+   if(MathAbs(entry - bid) <= PipsToPrice(2.0))
+      ok = trade.Sell(lots, _Symbol, 0, sl, tp, label);          // Near current price: market sell
+   else if(entry > bid + PipsToPrice(2.0))
+      ok = trade.SellLimit(lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label); // Above bid: sell limit (wait for retrace up)
    else
-      ok = trade.SellLimit(lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);
+   { PrintFormat("[%s] Entry %.5f is below bid %.5f — SellStop not supported", label, entry, bid); return false; }
 
    if(ok)
    {
@@ -702,26 +718,93 @@ bool TryStraightBuy()
 }
 
 //============================================================
+//  FVG ASIAN SELL — SL REENTRY LOGIC
+//  If FVG_Asian_Sell closes at a loss today (SL hit), place a buy on the next
+//  H1 bar with TP at the 1hr short-term high (proxy for daily equal highs).
+//  ⚠ MANUAL: verify TP at equal highs on the daily chart before leaving the trade.
+//============================================================
+
+// Polls today's closed deal history for a FVG_Asian_Sell that exited at a loss.
+// Sets g_AsianSellSLHit = true on detection. Safe to call every bar.
+void CheckAsianSellSLReentry()
+{
+   if(g_AsianSellSLHit || g_AsianSellReentered) return;
+
+   datetime dayStart = TodayMidnight();
+   if(!HistorySelect(dayStart, TimeCurrent())) return;
+
+   int total = HistoryDealsTotal();
+   for(int i = total - 1; i >= 0; i--)
+   {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(HistoryDealGetString(ticket,  DEAL_COMMENT)  != "FVG_Asian_Sell") continue;
+      if(HistoryDealGetInteger(ticket, DEAL_MAGIC)    != InpMagicNumber)   continue;
+      if(HistoryDealGetString(ticket,  DEAL_SYMBOL)   != _Symbol)          continue;
+      if(HistoryDealGetInteger(ticket, DEAL_ENTRY)    != DEAL_ENTRY_OUT)   continue;
+
+      double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT);
+      if(profit < 0)
+      {
+         g_AsianSellSLHit = true;
+         string msg = "⚠ FVG_Asian_Sell SL hit — re-entry BUY will fire on next bar. "
+                      "Verify TP at daily equal highs.";
+         Print(msg);
+         if(InpPopupAlerts) Alert(msg);
+         if(InpPushAlerts)  SendNotification(msg);
+      }
+      break; // Only need the first (most recent) exit deal for this label
+   }
+}
+
+// Re-entry buy placed on the bar AFTER FVG_Asian_Sell SL is hit.
+// Entry  : market buy at open of new bar
+// SL     : below the low of the previous H1 candle
+// TP     : 1hr short-term high (automated proxy for daily equal highs)
+// ⚠ MANUAL: adjust TP to actual equal highs on the daily chart.
+bool TryAsianSellReentryBuy()
+{
+   double entry = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double sl    = iLow(_Symbol, PERIOD_H1, 1) - PipsToPrice(InpFVGBuffer);
+   double tp    = GetSTHigh(InpSTH_Lookback);
+
+   if(tp <= entry) return false;
+
+   bool ok = PlaceBuy(entry, sl, tp, "Asian_Sell_Reentry_Buy");
+   if(ok)
+   {
+      g_AsianSellReentered = true;
+      string msg = "✓ Re-entry BUY placed after FVG_Asian_Sell SL hit. "
+                   "⚠ MANUAL: move TP to equal highs on D1 chart.";
+      Print(msg);
+      if(InpPopupAlerts) Alert(msg);
+      if(InpPushAlerts)  SendNotification(msg);
+   }
+   return ok;
+}
+
+//============================================================
 //  SELL SETUPS — called in priority order
 //============================================================
 
 bool ScanSellSetups()
 {
    int hr          = CurrentHour();
-   int sLondon     = NYtoServer(InpLondonStartNY);
-   int sNYKZ       = NYtoServer(InpNYKillZoneNY);
-   int sEnd        = NYtoServer(InpTradingEndNY);
+   int sAsianEnd   = NYtoServer(InpAsianEndNY);   // 00:00 NY — Asian session closes
+   int sLondon     = NYtoServer(InpLondonStartNY); // 02:00 NY
+   int sNYKZ       = NYtoServer(InpNYKillZoneNY);  // 05:00 NY
+   int sEnd        = NYtoServer(InpTradingEndNY);   // 10:00 NY
    bool triggered  = false;
 
-   // --- Priority 1: FVG Asian Sell (bearish FVG in last Asian candle) | London + NY KZ ---
-   if(!triggered && g_AsianFVGBearish && hr >= sLondon && hr < sEnd)
+   // --- Priority 1: FVG Asian Sell | 00:00–10:00 AM NY (inclusive) ---
+   // Bearish FVG formed in last Asian candle; enter as soon as Asian session closes
+   if(!triggered && g_AsianFVGBearish && hr >= sAsianEnd && hr <= sEnd)
       triggered = TryFVGAsianSell();
 
-   // --- Priority 2: FVG Sell (no Asian FVG → upside violation + bearish FVG) | 2AM–10AM incl. ---
+   // --- Priority 2: FVG Sell (no Asian FVG) | 02:00–10:00 AM NY (inclusive) ---
    if(!triggered && !g_AsianFVGBearish && hr >= sLondon && hr <= sEnd)
       triggered = TryFVGSell();
 
-   // --- Priority 3: Straight Sell | NY Kill Zone only (after 05:00 NY) ---
+   // --- Priority 3: Straight Sell | NY Kill Zone only (05:00–10:00 NY) ---
    if(!triggered && !g_AsianFVGBearish && hr >= sNYKZ && hr < sEnd)
       triggered = TryStraightSell();
 
@@ -733,10 +816,16 @@ bool ScanSellSetups()
 }
 
 // FVG Asian Sell
-// Trigger: bearish FVG in last Asian candle | 2–10AM
-// Entry  : market sell instantly on H1 candle close that forms the FVG
-// SL     : above the high of the candle before the FVG formed (left candle)
-// TP     : 1hr short-term low
+// Context: bearish FVG in last candle of Asian session | requires daily confirmation
+//          (strong continuation or strong reversal on D1 — verify manually).
+//          May 2024 is a reference month: look for equal lows on daily as key TP target.
+// Window : 00:00–10:00 AM NY (inclusive) — enters as soon as Asian session closes
+// Entry  : SELL LIMIT at zHigh (top/start of the bearish FVG zone).
+//          Price fills back up into the gap; we sell at the gap entry point.
+// SL     : above the high of the candle before the FVG (left candle of 3-bar pattern)
+// TP     : 1hr short-term low.
+//          ⚠ MANUAL: also look for key daily equal lows as the primary TP target.
+// Reentry: if SL is hit, a buy re-entry fires on the next H1 bar (see TryAsianSellReentryBuy).
 bool TryFVGAsianSell()
 {
    if(g_AsianLastBar < 0) return false;
@@ -744,19 +833,31 @@ bool TryFVGAsianSell()
    double zHigh, zLow;
    if(!GetFVGZone(g_AsianLastBar, zHigh, zLow)) return false;
 
-   double entry = SymbolInfoDouble(_Symbol, SYMBOL_BID); // Market sell on FVG close
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
 
-   // SL = high of the candle immediately before the FVG formed (left candle of 3-bar pattern)
+   // Entry is the TOP of the bearish FVG zone — place sell limit there.
+   // Guard: if price is already at or above our entry, the gap has already been filled — skip.
+   double entry = zHigh;
+   if(entry <= bid) return false;
+
+   // SL = above the left candle of the FVG (bar that is 2 back from the right candle)
    double sl = iHigh(_Symbol, PERIOD_H1, g_AsianLastBar + 2) + PipsToPrice(InpFVGBuffer);
 
+   // TP = 1hr short-term low (automated).
+   // Alert reminds trader to also check daily equal lows for the primary TP level.
    double tp = GetSTLow(InpSTH_Lookback);
    if(tp <= 0 || tp >= entry) return false;
+
+   string dailyMsg = "⚠ FVG_Asian_Sell placed — verify DAILY chart: strong continuation or reversal? "
+                     "Check equal lows on D1 for key TP. May 2024 is a reference example.";
+   Print(dailyMsg);
+   if(InpPopupAlerts) Alert(dailyMsg);
 
    return PlaceSell(entry, sl, tp, "FVG_Asian_Sell");
 }
 
 // FVG Sell (no Asian FVG) — DO NOT REENTER
-// Pre-checks : 2AM–10AM (inclusive) | upside violation of Asian range | bearish FVG formed
+// Pre-checks : 02:00–10:00 AM NY (inclusive) | upside violation of Asian range | bearish FVG formed
 // Entry      : market sell on close of the FVG candle (bar[1])
 // SL         : above the high of the candle before the FVG (bar[3]) + buffer
 // TP         : 1hr short-term low.
@@ -771,7 +872,7 @@ bool TryFVGSell()
    if(!GetFVGZone(1, zHigh, zLow)) return false;
 
    double entry = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   // SL above the left candle of the FVG (bar[3] in the 3-bar pattern)
+   // SL above the left candle of the FVG (bar[3] in the 3-bar pattern starting at bar[1])
    double sl = iHigh(_Symbol, PERIOD_H1, 3) + PipsToPrice(InpFVGBuffer);
 
    // TP: if all Asian candles were bullish, use the Asian range low; else use ST low
