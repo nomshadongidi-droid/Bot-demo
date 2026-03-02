@@ -820,8 +820,8 @@ bool ScanSellSetups()
 //          (strong continuation or strong reversal on D1 — verify manually).
 //          May 2024 is a reference month: look for equal lows on daily as key TP target.
 // Window : 00:00–10:00 AM NY (inclusive) — enters as soon as Asian session closes
-// Entry  : SELL LIMIT at zHigh (top/start of the bearish FVG zone).
-//          Price fills back up into the gap; we sell at the gap entry point.
+// Entry  : SELL LIMIT at midpoint of the bearish FVG zone ((zHigh + zLow) / 2).
+//          Price fills back up into the gap; we sell at the 50% level of the gap.
 // SL     : above the high of the candle before the FVG (left candle of 3-bar pattern)
 // TP     : 1hr short-term low.
 //          ⚠ MANUAL: also look for key daily equal lows as the primary TP target.
@@ -835,9 +835,9 @@ bool TryFVGAsianSell()
 
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
 
-   // Entry is the TOP of the bearish FVG zone — place sell limit there.
+   // Entry is the MIDPOINT of the bearish FVG zone — sell limit placed at 50% of the gap.
    // Guard: if price is already at or above our entry, the gap has already been filled — skip.
-   double entry = zHigh;
+   double entry = (zHigh + zLow) / 2.0;
    if(entry <= bid) return false;
 
    // SL = above the left candle of the FVG (bar that is 2 back from the right candle)
