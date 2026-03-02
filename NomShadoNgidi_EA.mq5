@@ -6,7 +6,7 @@
 //
 //  SETUP MODELS IMPLEMENTED:
 //  BUY  → FVG Asian Buy | FVG Buy | Straight Buy
-//  SELL → FVG Asian Sell | FVG Sell | Bearish Continuation | Straight Sell
+//  SELL → FVG Asian Sell | FVG Sell | Straight Sell
 //
 //  MANUAL TASKS (cannot be automated — trader must do these):
 //  • Check DXY for directional confluence each session
@@ -53,7 +53,6 @@ input double InpMinRRR         = 2.0;  // Minimum Risk:Reward Ratio (1:2 per pla
 
 input group "=== Stop Loss Settings ==="
 input int    InpFVGBuffer      = 3;    // SL buffer beyond FVG/structure level (pips)
-input int    InpStraightSL     = 40;   // Straight Sell SL pips (40 per plan)
 
 input group "=== Trade Settings ==="
 input int    InpMaxDailyTrades = 2;    // Max trades per day (plan: max 2)
@@ -803,11 +802,7 @@ bool ScanSellSetups()
    if(!triggered && !g_AsianFVGBearish && hr >= sLondon && hr <= sEnd)
       triggered = TryFVGSell();
 
-   // --- Priority 3: Bearish Continuation | NY Kill Zone only (05:00–10:00 NY) ---
-   if(!triggered && !g_AsianFVGBearish && hr >= sNYKZ && hr < sEnd)
-      triggered = TryBearishContinuationSell();
-
-   // --- Priority 4: Straight Sell (Bearish Wick) | NY session start onwards (05:00–10:00 NY incl.) ---
+   // --- Priority 3: Straight Sell (Bearish Wick) | NY session start onwards (05:00–10:00 NY incl.) ---
    // Allow re-entry: no single-fire guard — setup can retrigger on a new valid bar
    if(!triggered && hr >= sNYKZ && hr <= sEnd)
       triggered = TryStraightSell();
@@ -887,36 +882,6 @@ bool TryFVGSell()
    bool ok = PlaceSell(entry, sl, tp, "FVG_Sell");
    if(ok) g_FVGSellDone = true;
    return ok;
-}
-
-// Bearish Continuation
-// Trigger: no Asian FVG | after 5AM | bearish formations | bearish close
-// Entry  : market sell on bearish H1 close
-// SL     : above the wick (high) of the bearish candle + buffer;
-//          if that wick is very long (> InpStraightSL pips away), cap at 40 pip fixed SL
-// TP     : 1hr short-term low or Asian low
-bool TryBearishContinuationSell()
-{
-   if(!BearishCandlesTillHour(InpLondonOpen)) return false;
-   if(!IsBearishCandle(1) || !IsBearishCandle(2)) return false;
-
-   double entry   = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   double wickSL  = iHigh(_Symbol, PERIOD_H1, 1) + PipsToPrice(InpFVGBuffer);
-   double fixedSL = entry + PipsToPrice(InpStraightSL);
-   // Use wick SL unless the wick is very long — then cap at 40 pips
-   double sl      = (PriceToPips(wickSL - entry) > InpStraightSL) ? fixedSL : wickSL;
-   double tp    = GetSTLow(InpSTH_Lookback);
-
-   // Fallback TP: Asian low or minimum 2× SL
-   if(tp <= 0 || tp >= entry)
-   {
-      if(g_AsianLow > 0 && g_AsianLow < entry) tp = g_AsianLow;
-      else tp = entry - PipsToPrice(InpStraightSL * InpMinRRR);
-   }
-
-   if(tp <= 0 || tp >= entry) return false;
-
-   return PlaceSell(entry, sl, tp, "Bearish_Continuation");
 }
 
 // Straight Sell (Bearish Wick) — ALLOW RE-ENTRY
