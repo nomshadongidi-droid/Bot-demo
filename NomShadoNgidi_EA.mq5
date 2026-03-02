@@ -52,9 +52,8 @@ input group "=== Risk Management ==="
 input double InpMinRRR         = 2.0;  // Minimum Risk:Reward Ratio (1:2 per plan)
 
 input group "=== Stop Loss Settings ==="
-input int    InpFVGBuffer      = 3;    // SL buffer beyond FVG level (pips)
+input int    InpFVGBuffer      = 3;    // SL buffer beyond FVG/structure level (pips)
 input int    InpStraightSL     = 40;   // Straight Sell SL pips (40 per plan)
-input int    InpSellRevSL      = 30;   // Sell Reversal SL pips (20-40 per plan)
 
 input group "=== Trade Settings ==="
 input int    InpMaxDailyTrades = 2;    // Max trades per day (plan: max 2)
@@ -808,8 +807,9 @@ bool ScanSellSetups()
    if(!triggered && !g_AsianFVGBearish && hr >= sNYKZ && hr < sEnd)
       triggered = TryStraightSell();
 
-   // --- Priority 4: Sell Reversal | London + NY KZ ---
-   if(!triggered && hr >= sLondon && hr < sEnd)
+   // --- Priority 4: Sell Reversal | NY session start onwards (05:00–10:00 NY incl.) ---
+   // Allow re-entry: no single-fire guard — setup can retrigger on a new valid bar
+   if(!triggered && hr >= sNYKZ && hr <= sEnd)
       triggered = TrySellReversal();
 
    return triggered;
@@ -919,22 +919,38 @@ bool TryStraightSell()
    return PlaceSell(entry, sl, tp, "Straight_Sell");
 }
 
-// Sell Reversal (Bearish Wick)
-// Trigger: bearish candle with wick above previous high; OR very long bullish → bearish
-// Entry  : market sell
-// SL     : 20–40 pips
-// TP     : 1hr short-term low (strictly)
+// Sell Reversal (Bearish Wick) — ALLOW RE-ENTRY
+// Window : 05:00–10:00 AM NY (start of NY session)
+// Trigger: Prior bullish candle formations, then bar[1] closes bearish with a wick
+//          above bar[2]'s high (market execution on close).
+//          Strong confirmation: bar[2] is a very long bullish candle (e.g. news spike),
+//          but a standard bearish wick above the previous high is also valid.
+// SL     : above MathMax(bar[1].high, bar[2].high) + buffer
+//          — covers both the wick tip (simple case) and the prior spike high (news case)
+// TP     : 1hr short-term low.
+//          If all Asian candles were strong bearish, use Asian session low as TP.
 bool TrySellReversal()
 {
-   bool bearishWick       = IsBearishCandle(1) &&
-                            iHigh(_Symbol, PERIOD_H1, 1) > iHigh(_Symbol, PERIOD_H1, 2);
-   bool afterLongBullish  = IsVeryLongBullishCandle(2) && IsBearishCandle(1);
+   // Core condition: bar[1] closes bearish with a wick above bar[2]'s high
+   if(!IsBearishCandle(1)) return false;
+   if(iHigh(_Symbol, PERIOD_H1, 1) <= iHigh(_Symbol, PERIOD_H1, 2)) return false;
 
-   if(!bearishWick && !afterLongBullish) return false;
+   // Bullish formations must precede the reversal: bar[2] or bar[3] should be bullish
+   bool hasBullishFormation = IsBullishCandle(2) || IsBullishCandle(3);
+   if(!hasBullishFormation) return false;
 
    double entry = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   double sl    = entry + PipsToPrice(InpSellRevSL);
-   double tp    = GetSTLow(InpSTH_Lookback);
+
+   // SL above the highest point between the entry candle's wick and the prior candle
+   double sl = MathMax(iHigh(_Symbol, PERIOD_H1, 1),
+                       iHigh(_Symbol, PERIOD_H1, 2)) + PipsToPrice(InpFVGBuffer);
+
+   // TP: Asian low if all Asian candles were bearish; otherwise 1hr short-term low
+   double tp;
+   if(g_AllAsianBearish && g_AsianLow > 0 && g_AsianLow < entry)
+      tp = g_AsianLow;
+   else
+      tp = GetSTLow(InpSTH_Lookback);
 
    if(tp <= 0 || tp >= entry) return false;
 
