@@ -43,8 +43,9 @@
 // Uses TimeGMT() so broker server timezone is completely irrelevant.
 input group "=== Session Times (Eastern Time — auto DST) ==="
 input int    InpAsianStartNY   = 19;   // Asian Session Start — UTC-5 (plan: 19:00)
-input int    InpAsianEndNY     = 0;    // Asian Session End   — NY time (plan: 00:00)
-input int    InpLondonStartNY  = 2;    // London Kill Zone Start — NY time (plan: 02:00)
+input int    InpAsianEndNY            = 0;  // Asian Session End   — NY time (plan: 00:00)
+input int    InpFVGAsianWindowStartNY = 1;  // FVG Asian setups window start — NY time (plan: 01:00)
+input int    InpLondonStartNY         = 2;  // London Kill Zone Start — NY time (plan: 02:00)
 input int    InpNYKillZoneNY   = 5;    // NY Kill Zone Start — NY time (plan: 05:00–10:00)
 input int    InpTradingEndNY   = 10;   // NY Kill Zone End / Trading Window End — NY time (plan: 10:00)
 
@@ -675,12 +676,14 @@ bool ScanBuySetups()
    int sEnd        = NYtoServer(InpTradingEndNY);
    bool triggered  = false;
 
-   // --- Priority 1: FVG Asian Buy (bullish FVG in last Asian candle) | London + NY KZ ---
-   if(!triggered && g_AsianFVGBullish && hr >= sLondon && hr < sEnd)
+   int sFVGAsianStart = NYtoServer(InpFVGAsianWindowStartNY);
+
+   // --- Priority 1: FVG Asian Buy | 01:00–10:00 NY | daily buy reversal required ---
+   if(!triggered && g_AsianFVGBullish && hr >= sFVGAsianStart && hr < sEnd)
       triggered = TryFVGAsianBuy();
 
-   // --- Priority 2: FVG Buy (no Asian FVG → wait for violation + FVG) | London + NY KZ ---
-   if(!triggered && !g_AsianFVGBullish && hr >= sLondon && hr < sEnd)
+   // --- Priority 2: FVG Buy (downside violation + bullish FVG) | 02:00–10:00 NY ---
+   if(!triggered && hr >= sLondon && hr < sEnd)
       triggered = TryFVGBuy();
 
    // --- Priority 3: Straight Buy | NY Kill Zone only (after 05:00 NY) ---
@@ -714,8 +717,8 @@ bool TryFVGAsianBuy()
    return PlaceBuy(entry, sl, tp, "FVG_Asian_Buy");
 }
 
-// FVG Buy (no Asian FVG)
-// Trigger: downside violation occurred, then bullish FVG forms | 2–10AM
+// FVG Buy
+// Trigger: downside violation of Asian range + bullish FVG forms | 2–10AM
 // Entry  : market buy instantly on H1 candle close that forms the FVG
 // SL     : below left candle of FVG (candle before the gap)
 // TP     : 1hr short-term high
@@ -737,20 +740,27 @@ bool TryFVGBuy()
 }
 
 // Straight Buy
-// Trigger: after 5AM | bearish candles until London | bullish close
-// Note   : Asian FVG may or may not be present — allowed as long as daily is NOT a reversal
+// Trigger: after 5AM | bearish candles from London open (2AM) through NY KZ open (5AM) | bullish close
 // Entry  : market buy on bullish H1 close
 // SL     : below current bullish candle or previous candle (whichever is lower)
-// TP     : 1hr short-term high
+// TP     : 1hr short-term high.
+//          If all Asian candles were bearish, TP = Asian session start level (g_AsianHigh).
 bool TryStraightBuy()
 {
-   if(!BearishCandlesTillHour(InpLondonStartNY)) return false;
-   if(!IsBullishCandle(1))                    return false;
+   if(!BearishCandlesTillHour(InpNYKillZoneNY)) return false; // bearish from 2AM to 5AM
+   if(!IsBullishCandle(1))                       return false;
 
    double entry = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double sl    = MathMin(iLow(_Symbol, PERIOD_H1, 1),
                            iLow(_Symbol, PERIOD_H1, 2)) - PipsToPrice(InpFVGBuffer);
-   double tp    = GetSTHigh(InpSTH_Lookback);
+
+   // TP: if all Asian candles were bearish, target the Asian session open level; else ST high
+   double tp;
+   if(g_AllAsianBearish && g_AsianHigh > 0 && g_AsianHigh > entry)
+      tp = g_AsianHigh;
+   else
+      tp = GetSTHigh(InpSTH_Lookback);
+
    if(tp <= entry) return false;
 
    return PlaceBuy(entry, sl, tp, "Straight_Buy");
@@ -834,13 +844,14 @@ bool ScanSellSetups()
    int sEnd        = NYtoServer(InpTradingEndNY);   // 10:00 NY
    bool triggered  = false;
 
-   // --- Priority 1: FVG Asian Sell | 00:00–10:00 AM NY (inclusive) ---
-   // Bearish FVG formed in last Asian candle; enter as soon as Asian session closes
-   if(!triggered && g_AsianFVGBearish && hr >= sAsianEnd && hr <= sEnd)
+   int sFVGAsianStart = NYtoServer(InpFVGAsianWindowStartNY);
+
+   // --- Priority 1: FVG Asian Sell | 01:00–10:00 AM NY (inclusive) ---
+   if(!triggered && g_AsianFVGBearish && hr >= sFVGAsianStart && hr <= sEnd)
       triggered = TryFVGAsianSell();
 
-   // --- Priority 2: FVG Sell (no Asian FVG) | 02:00–10:00 AM NY (inclusive) ---
-   if(!triggered && !g_AsianFVGBearish && hr >= sLondon && hr <= sEnd)
+   // --- Priority 2: FVG Sell (upside violation + bearish FVG) | 02:00–10:00 AM NY (inclusive) ---
+   if(!triggered && hr >= sLondon && hr <= sEnd)
       triggered = TryFVGSell();
 
    // --- Priority 3: Straight Sell (Bearish Wick) | NY session start onwards (05:00–10:00 NY incl.) ---
@@ -855,7 +866,7 @@ bool ScanSellSetups()
 // Context: bearish FVG in last candle of Asian session | requires daily confirmation
 //          (strong continuation or strong reversal on D1 — verify manually).
 //          May 2024 is a reference month: look for equal lows on daily as key TP target.
-// Window : 00:00–10:00 AM NY (inclusive) — enters as soon as Asian session closes
+// Window : 01:00–10:00 AM NY (inclusive)
 // Entry  : SELL LIMIT at midpoint of the bearish FVG zone ((zHigh + zLow) / 2).
 //          Price fills back up into the gap; we sell at the 50% level of the gap.
 // SL     : above the high of the candle before the FVG (left candle of 3-bar pattern)
@@ -892,7 +903,7 @@ bool TryFVGAsianSell()
    return PlaceSell(entry, sl, tp, "FVG_Asian_Sell");
 }
 
-// FVG Sell (no Asian FVG) — DO NOT REENTER
+// FVG Sell — DO NOT REENTER
 // Pre-checks : 02:00–10:00 AM NY (inclusive) | upside violation of Asian range | bearish FVG formed
 // Entry      : market sell on close of the FVG candle (bar[1])
 // SL         : above the high of the candle before the FVG (bar[3]) + buffer
