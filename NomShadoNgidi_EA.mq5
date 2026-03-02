@@ -37,12 +37,11 @@
 //  INPUT PARAMETERS
 //============================================================
 
-// All session hours are in NEW YORK TIME.
-// Set InpNYtoServer = hours to add to NY time to reach your broker's server time.
-// Examples: NYC broker (EST) = 0 | GMT broker = 5 | GMT+2 broker = 7 | GMT+3 broker = 8
-input group "=== Session Times (New York Time) ==="
-input int    InpNYtoServer     = 5;    // NY-to-Server offset (hours). EST=5, EDT=4, GMT+2=7
-input int    InpAsianStartNY   = 19;   // Asian Session Start — NY time (plan: 19:00)
+// All session hours are in UTC-5 (New York / Eastern Standard Time).
+// The EA reads TimeGMT() and subtracts 5 hours — broker server time is irrelevant.
+// Note: during US Daylight Saving Time (EDT = UTC-4) you may need to shift hours by 1.
+input group "=== Session Times (UTC-5 / New York Time) ==="
+input int    InpAsianStartNY   = 19;   // Asian Session Start — UTC-5 (plan: 19:00)
 input int    InpAsianEndNY     = 0;    // Asian Session End   — NY time (plan: 00:00)
 input int    InpLondonStartNY  = 2;    // London Kill Zone Start — NY time (plan: 02:00)
 input int    InpNYKillZoneNY   = 5;    // NY Kill Zone Start — NY time (plan: 05:00–10:00)
@@ -52,7 +51,7 @@ input group "=== Risk Management ==="
 input double InpMinRRR         = 2.0;  // Minimum Risk:Reward Ratio (1:2 per plan)
 
 input group "=== Stop Loss Settings ==="
-input int    InpFVGBuffer      = 3;    // SL buffer beyond FVG/structure level (pips)
+input int    InpFVGBuffer      = 5;    // SL/entry buffer in pips (5 = AvaTrade spread breather)
 
 input group "=== Trade Settings ==="
 input int    InpMaxDailyTrades = 2;    // Max trades per day (plan: max 2)
@@ -113,8 +112,8 @@ int OnInit()
    PrintFormat("Asian NY: %02d:00-%02d:00 | London KZ NY: %02d:00-%02d:00 | NY KZ NY: %02d:00-%02d:00",
                InpAsianStartNY, InpAsianEndNY, InpLondonStartNY, InpNYKillZoneNY,
                InpNYKillZoneNY, InpTradingEndNY);
-   PrintFormat("NY-to-Server offset: +%d hrs | Max daily trades: %d",
-               InpNYtoServer, InpMaxDailyTrades);
+   PrintFormat("Time base: UTC-5 (NY/EST) via TimeGMT()-5h | Max daily trades: %d",
+               InpMaxDailyTrades);
 
    if(!InpAllowMonday)
       Print("Monday filter: ACTIVE (no trades on Mondays)");
@@ -168,51 +167,55 @@ void OnTick()
 }
 
 //============================================================
-//  TIME HELPERS
+//  TIME HELPERS — all based on UTC-5 (New York / Eastern Standard Time)
+//  Uses TimeGMT() from MT5 so broker server timezone is irrelevant.
 //============================================================
+
+// Current UTC-5 datetime
+datetime NowNY() { return TimeGMT() - 5 * 3600; }
+
+// Convert any server-time bar timestamp to UTC-5
+datetime BarTimeNY(int barIndex)
+{
+   int serverOffsetSecs = (int)((datetime)TimeCurrent() - (datetime)TimeGMT());
+   return iTime(_Symbol, PERIOD_H1, barIndex) - serverOffsetSecs - 5 * 3600;
+}
 
 bool IsMonday()
 {
    MqlDateTime dt;
-   TimeToStruct(TimeCurrent(), dt);
+   TimeToStruct(NowNY(), dt);
    return dt.day_of_week == 1;
 }
 
 bool IsInTradingWindow()
 {
    MqlDateTime dt;
-   TimeToStruct(TimeCurrent(), dt);
-   int serverHour  = dt.hour;
-   int serverStart = NYtoServer(InpLondonStartNY);  // London KZ open = trading starts
-   int serverEnd   = NYtoServer(InpTradingEndNY);
-   return (serverHour >= serverStart && serverHour < serverEnd);
+   TimeToStruct(NowNY(), dt);
+   return (dt.hour >= InpLondonStartNY && dt.hour < InpTradingEndNY);
 }
 
 int CurrentHour()
 {
    MqlDateTime dt;
-   TimeToStruct(TimeCurrent(), dt);
+   TimeToStruct(NowNY(), dt);
    return dt.hour;
 }
-
-// Returns the server hour that corresponds to the NY Kill Zone open
-int ServerNYKillZone() { return NYtoServer(InpNYKillZoneNY); }
 
 datetime TodayMidnight()
 {
    MqlDateTime dt;
-   TimeToStruct(TimeCurrent(), dt);
+   TimeToStruct(NowNY(), dt);
    dt.hour = 0; dt.min = 0; dt.sec = 0;
    return StructToTime(dt);
 }
 
 //============================================================
-//  TIME CONVERSION
-//  All session times are configured as New York time.
-//  NYtoServer() converts them to broker server time.
+//  NYtoServer — identity: session times are already in UTC-5,
+//  no broker offset needed.
 //============================================================
 
-int NYtoServer(int nyHour) { return (nyHour + InpNYtoServer) % 24; }
+int NYtoServer(int nyHour) { return nyHour; }
 
 void ResetDailyCount()
 {
@@ -281,24 +284,24 @@ void AnalyseAsianSession()
 
    for(int i = 1; i < totalBars; i++)
    {
-      datetime bTime = iTime(_Symbol, PERIOD_H1, i);
+      // Convert bar server time → UTC-5 (New York time)
       MqlDateTime bDt;
-      TimeToStruct(bTime, bDt);
+      TimeToStruct(BarTimeNY(i), bDt);
 
-      // Reconstruct this bar's midnight
+      // Reconstruct this bar's UTC-5 midnight
       MqlDateTime bMidDt = bDt;
       bMidDt.hour = 0; bMidDt.min = 0; bMidDt.sec = 0;
       datetime bDay = StructToTime(bMidDt);
 
-      if(bDay < today) break;    // Reached yesterday — stop
+      if(bDay < today) break;    // Reached yesterday (UTC-5) — stop
       if(bDay > today) continue; // Future bar — skip
 
-      // Asian session: 19:00–00:00 NY, converted to server time
-      int sAsianStart = NYtoServer(InpAsianStartNY); // e.g. NY 19 + offset
-      int sAsianEnd   = NYtoServer(InpAsianEndNY);   // e.g. NY 00 + offset
+      // Asian session: 19:00–00:00 in UTC-5 (wraps midnight)
+      int sAsianStart = InpAsianStartNY; // 19
+      int sAsianEnd   = InpAsianEndNY;   // 0
       bool inAsian    = (sAsianStart < sAsianEnd)
                         ? (bDt.hour >= sAsianStart && bDt.hour < sAsianEnd)
-                        : (bDt.hour >= sAsianStart || bDt.hour < sAsianEnd); // handles wrap
+                        : (bDt.hour >= sAsianStart || bDt.hour < sAsianEnd); // wrap
 
       if(inAsian)
       {
@@ -512,7 +515,7 @@ bool IsDailyBuyReversalPattern()
    return d1Bearish && d1Body > avgBody * 2.0;
 }
 
-// Checks that ALL H1 candles between TradingStart and the given endHour are bearish
+// Checks that ALL H1 candles from London KZ open up to endHour (UTC-5) are bearish
 bool BearishCandlesTillHour(int endHour)
 {
    int bars = iBars(_Symbol, PERIOD_H1);
@@ -520,9 +523,9 @@ bool BearishCandlesTillHour(int endHour)
    for(int i = 1; i < bars; i++)
    {
       MqlDateTime dt;
-      TimeToStruct(iTime(_Symbol, PERIOD_H1, i), dt);
-      if(dt.hour < InpTradingStart) break;
-      if(dt.hour >= InpTradingStart && dt.hour <= endHour)
+      TimeToStruct(BarTimeNY(i), dt); // UTC-5 bar time
+      if(dt.hour < InpLondonStartNY) break;
+      if(dt.hour >= InpLondonStartNY && dt.hour <= endHour)
       {
          checked = true;
          if(IsBullishCandle(i)) return false;
@@ -703,7 +706,7 @@ bool TryFVGBuy()
 // TP     : 1hr short-term high
 bool TryStraightBuy()
 {
-   if(!BearishCandlesTillHour(InpLondonOpen)) return false;
+   if(!BearishCandlesTillHour(InpLondonStartNY)) return false;
    if(!IsBullishCandle(1))                    return false;
 
    double entry = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
