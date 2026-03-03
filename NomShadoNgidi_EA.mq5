@@ -91,7 +91,10 @@ int      g_AsianLastBar     = -1;
 datetime g_AsianDate        = 0;
 
 // Per-day setup guards
-bool     g_FVGSellDone        = false; // FVG Sell: do not reenter after first signal
+bool     g_FVGBuyDone         = false; // FVG Buy fired today  — blocks Straight Buy for the day
+bool     g_StraightBuyDone    = false; // Straight Buy fired today — blocks FVG Buy for the day
+bool     g_FVGSellDone        = false; // FVG Sell fired today — blocks Straight Sell for the day
+bool     g_StraightSellDone   = false; // Straight Sell fired today — blocks FVG Sell for the day
 bool     g_AsianSellSLHit     = false; // FVG Asian Sell closed at SL loss today
 bool     g_AsianSellReentered = false; // Re-entry buy already placed after Asian Sell SL
 
@@ -277,7 +280,10 @@ void ResetDailyCount()
    {
       g_DailyCount          = 0;
       g_LastDay             = today;
+      g_FVGBuyDone          = false;
+      g_StraightBuyDone     = false;
       g_FVGSellDone         = false;
+      g_StraightSellDone    = false;
       g_AsianSellSLHit      = false;
       g_AsianSellReentered  = false;
    }
@@ -740,6 +746,7 @@ bool TryFVGAsianBuy()
 // TP     : 1hr short-term high
 bool TryFVGBuy()
 {
+   if(g_StraightBuyDone)       return false; // Straight Buy already fired today
    if(!HasDownsideViolation()) return false;
    if(DetectFVG(1) != 1)       return false;
 
@@ -752,7 +759,9 @@ bool TryFVGBuy()
    double tp = GetSTHigh(InpSTH_Lookback);
    if(tp <= entry) return false;
 
-   return PlaceBuy(entry, sl, tp, "FVG_Buy");
+   bool ok = PlaceBuy(entry, sl, tp, "FVG_Buy");
+   if(ok) g_FVGBuyDone = true;
+   return ok;
 }
 
 // Straight Buy
@@ -763,6 +772,7 @@ bool TryFVGBuy()
 //          If all Asian candles were bearish, TP = Asian session start level (g_AsianHigh).
 bool TryStraightBuy()
 {
+   if(g_FVGBuyDone)                              return false; // FVG Buy already fired today
    if(!BearishCandlesTillHour(InpNYKillZoneNY)) return false; // bearish from 2AM to 5AM
    if(!IsBullishCandle(1))                       return false;
 
@@ -779,7 +789,9 @@ bool TryStraightBuy()
 
    if(tp <= entry) return false;
 
-   return PlaceBuy(entry, sl, tp, "Straight_Buy");
+   bool ok = PlaceBuy(entry, sl, tp, "Straight_Buy");
+   if(ok) g_StraightBuyDone = true;
+   return ok;
 }
 
 //============================================================
@@ -928,6 +940,7 @@ bool TryFVGAsianSell()
 bool TryFVGSell()
 {
    if(g_FVGSellDone)           return false; // No reenter after first signal today
+   if(g_StraightSellDone)      return false; // Straight Sell already fired today
    if(!HasUpsideViolation())   return false;
    if(DetectFVG(1) != -1)      return false;
 
@@ -964,6 +977,8 @@ bool TryFVGSell()
 //          If all Asian candles were strong bearish, use Asian session low as TP.
 bool TryStraightSell()
 {
+   if(g_FVGSellDone) return false; // FVG Sell already fired today
+
    // Core condition: bar[1] closes bearish with a wick above bar[2]'s high
    if(!IsBearishCandle(1)) return false;
    if(iHigh(_Symbol, PERIOD_H1, 1) <= iHigh(_Symbol, PERIOD_H1, 2)) return false;
@@ -987,7 +1002,9 @@ bool TryStraightSell()
 
    if(tp <= 0 || tp >= entry) return false;
 
-   return PlaceSell(entry, sl, tp, "Straight_Sell");
+   bool ok = PlaceSell(entry, sl, tp, "Straight_Sell");
+   if(ok) g_StraightSellDone = true;
+   return ok;
 }
 
 //+------------------------------------------------------------------+
