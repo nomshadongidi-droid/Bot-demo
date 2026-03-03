@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //|                       NomShadoNgidi_EA.mq5                       |
 //|            Expert Advisor — Nomshado Ngidi Trading Plan Q1 2025  |
-//|                             Version 1.0                          |
+//|                 Instrument: US.30 ONLY  |  Version 1.01          |
 //+------------------------------------------------------------------+
 //
 //  SETUP MODELS IMPLEMENTED:
@@ -19,14 +19,15 @@
 //  HOW TO INSTALL:
 //  1. Copy this file to: MT5 → File → Open Data Folder → MQL5 → Experts
 //  2. Restart MetaTrader 5 (or press F5 in MetaEditor)
-//  3. Drag the EA onto your H1 chart of the desired symbol
+//  3. Drag the EA onto your US.30 H1 chart (only instrument supported)
 //  4. Ensure "Allow Algo Trading" is enabled in MT5
 //  5. Configure input parameters to match your account/timezone
 //
 //+------------------------------------------------------------------+
 #property copyright   "Nomshado Ngidi"
-#property version     "1.00"
+#property version     "1.01"
 #property description "MT5 EA — Nomshado Ngidi Trading Plan Q1 2025"
+#property description "Instrument: US.30 ONLY"
 #property description "Setups: FVG Buy/Sell, Asian FVG, Straight"
 
 #include <Trade\Trade.mqh>
@@ -100,6 +101,19 @@ bool     g_AsianSellReentered = false; // Re-entry buy already placed after Asia
 
 int OnInit()
 {
+   // ── Symbol Lock: US.30 only ──────────────────────────────────────
+   // Accepts "US.30" (AvaTrade) and "US30" (alternative broker naming).
+   // Refuses to run on any other instrument.
+   if(StringFind(_Symbol, "US.30") < 0 && StringFind(_Symbol, "US30") < 0)
+   {
+      string errMsg = "WRONG SYMBOL: This EA trades US.30 only. "
+                      "Current chart is " + _Symbol + ". "
+                      "Attach the EA to a US.30 chart and retry.";
+      Alert(errMsg);
+      Print(errMsg);
+      return INIT_FAILED;
+   }
+
    // Determine pip size for this symbol
    int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
    g_PipSize = (digits == 3 || digits == 5) ? _Point * 10.0 : _Point;
