@@ -346,8 +346,8 @@ void AnalyseAsianSession()
       bMidDt.hour = 0; bMidDt.min = 0; bMidDt.sec = 0;
       datetime bDay = StructToTime(bMidDt);
 
-      if(bDay < today) break;    // Reached yesterday (UTC-5) — stop
-      if(bDay > today) continue; // Future bar — skip
+      if(bDay < today - 86400) break; // Before yesterday (UTC-5) — stop
+      if(bDay > today) continue;     // Future bar — skip
 
       // Asian session: 19:00–00:00 in UTC-5 (wraps midnight)
       int sAsianStart = InpAsianStartNY; // 19
