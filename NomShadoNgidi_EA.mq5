@@ -568,15 +568,17 @@ bool IsDailyBuyReversalPattern()
    return d1Bearish && d1Body > avgBody * 2.0;
 }
 
-// Checks that ALL H1 candles from London KZ open up to endHour (UTC-5) are bearish
+// Checks that ALL H1 candles from London KZ open up to endHour (NY) are bearish.
+// Starts from bar[2] because bar[1] is the trigger candle (bullish) and must not
+// be included in the bearish check — otherwise the setup can never fire.
 bool BearishCandlesTillHour(int endHour)
 {
    int bars = iBars(_Symbol, PERIOD_H1);
    bool checked = false;
-   for(int i = 1; i < bars; i++)
+   for(int i = 2; i < bars; i++)   // bar[1] = trigger candle; start check from bar[2]
    {
       MqlDateTime dt;
-      TimeToStruct(BarTimeNY(i), dt); // UTC-5 bar time
+      TimeToStruct(BarTimeNY(i), dt); // NY bar open time
       if(dt.hour < InpLondonStartNY) break;
       if(dt.hour >= InpLondonStartNY && dt.hour <= endHour)
       {
