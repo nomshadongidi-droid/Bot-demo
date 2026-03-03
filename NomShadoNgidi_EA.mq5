@@ -102,13 +102,13 @@ bool     g_AsianSellReentered = false; // Re-entry buy already placed after Asia
 int OnInit()
 {
    // ── Symbol Lock: US.30 only ──────────────────────────────────────
-   // Accepts "US.30" (AvaTrade) and "US30" (alternative broker naming).
+   // Accepts "US.30", "US_30" (AvaTrade variants) and "US30" (alternative broker naming).
    // Refuses to run on any other instrument.
-   if(StringFind(_Symbol, "US.30") < 0 && StringFind(_Symbol, "US30") < 0)
+   if(StringFind(_Symbol, "US.30") < 0 && StringFind(_Symbol, "US30") < 0 && StringFind(_Symbol, "US_30") < 0)
    {
       string errMsg = "WRONG SYMBOL: This EA trades US.30 only. "
                       "Current chart is " + _Symbol + ". "
-                      "Attach the EA to a US.30 chart and retry.";
+                      "Attach the EA to a US.30 / US_30 chart and retry.";
       Alert(errMsg);
       Print(errMsg);
       return INIT_FAILED;
