@@ -574,6 +574,24 @@ bool IsDailyBuyReversalPattern()
    return d1Bearish && d1Body > avgBody * 2.0;
 }
 
+// Daily sell reversal: previous daily candle is a strong bullish candle (>= 2x avg body).
+// A large bullish daily candle signals the market has swept highs — sell reversal is expected.
+bool IsDailySellReversalPattern()
+{
+   int d1Bars = iBars(_Symbol, PERIOD_D1);
+   if(d1Bars < 22) return false; // need enough history
+
+   double avgBody = 0;
+   for(int i = 2; i < 22; i++)
+      avgBody += MathAbs(iClose(_Symbol, PERIOD_D1, i) - iOpen(_Symbol, PERIOD_D1, i));
+   avgBody /= 20.0;
+
+   double d1Body = iClose(_Symbol, PERIOD_D1, 1) - iOpen(_Symbol, PERIOD_D1, 1);
+   bool d1Bullish = iClose(_Symbol, PERIOD_D1, 1) > iOpen(_Symbol, PERIOD_D1, 1);
+
+   return d1Bullish && d1Body > avgBody * 2.0;
+}
+
 // Checks that ALL H1 candles from London KZ open up to endHour (NY) are bearish.
 // Starts from bar[2] because bar[1] is the trigger candle (bullish) and must not
 // be included in the bearish check — otherwise the setup can never fire.
@@ -891,8 +909,8 @@ bool ScanSellSetups()
 }
 
 // FVG Asian Sell
-// Context: bearish FVG in last candle of Asian session | requires daily confirmation
-//          (strong continuation or strong reversal on D1 — verify manually).
+// Context: bearish FVG in last candle of Asian session | requires daily sell reversal candle
+//          (previous D1 candle must be a strong bullish candle >= 2x avg body — automated check).
 //          May 2024 is a reference month: look for equal lows on daily as key TP target.
 // Window : 01:00–10:00 AM NY (inclusive)
 // Entry  : SELL LIMIT at midpoint of the bearish FVG zone ((zHigh + zLow) / 2).
@@ -904,6 +922,7 @@ bool ScanSellSetups()
 bool TryFVGAsianSell()
 {
    if(g_AsianLastBar < 0) return false;
+   if(!IsDailySellReversalPattern()) return false; // Daily must show a sell reversal candle
 
    double zHigh, zLow;
    if(!GetFVGZone(g_AsianLastBar, zHigh, zLow)) return false;
