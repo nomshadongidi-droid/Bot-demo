@@ -759,7 +759,8 @@ bool TryFVGAsianBuy()
 
 // FVG Buy
 // Trigger: downside violation of Asian range + bullish FVG forms | 2–10AM
-// Entry  : market buy instantly on H1 candle close that forms the FVG
+// Entry  : market buy if RRR >= 1:2; otherwise buy limit inside the FVG gap
+//          at the price that gives exactly 1:2 RRR
 // SL     : below left candle of FVG (candle before the gap)
 // TP     : 1hr short-term high
 bool TryFVGBuy()
@@ -771,11 +772,37 @@ bool TryFVGBuy()
    double zHigh, zLow;
    if(!GetFVGZone(1, zHigh, zLow)) return false;
 
-   double entry = SymbolInfoDouble(_Symbol, SYMBOL_ASK); // Market buy on FVG close
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    // Left candle of FVG at bar[1] is bar[3]
-   double sl = iLow(_Symbol, PERIOD_H1, 3) - PipsToPrice(InpFVGBuffer);
-   double tp = GetSTHigh(InpSTH_Lookback);
-   if(tp <= entry) return false;
+   double sl  = iLow(_Symbol, PERIOD_H1, 3) - PipsToPrice(InpFVGBuffer);
+   double tp  = GetSTHigh(InpSTH_Lookback);
+   if(tp <= ask || sl >= ask) return false;
+
+   double entry;
+   double marketRRR = (ask - sl > 0) ? (tp - ask) / (ask - sl) : 0;
+
+   if(marketRRR >= InpMinRRR)
+   {
+      entry = ask; // Market buy — RRR is acceptable
+   }
+   else
+   {
+      // Solve for limit entry that gives exactly InpMinRRR:
+      // (tp - entry) / (entry - sl) = InpMinRRR  →  entry = (tp + InpMinRRR * sl) / (1 + InpMinRRR)
+      entry = (tp + InpMinRRR * sl) / (1.0 + InpMinRRR);
+
+      if(entry >= ask) return false; // No room below ask for a limit
+      if(entry <= sl)  return false; // Entry at or below SL — invalid
+
+      // Clamp to FVG zone low so the limit sits inside the gap
+      entry = MathMax(entry, zLow);
+
+      double limitRRR = (entry - sl > 0) ? (tp - entry) / (entry - sl) : 0;
+      if(limitRRR < InpMinRRR) return false;
+
+      PrintFormat("[FVG_Buy] Market RRR %.2f < %.1f — BuyLimit at %.5f for 1:%.1f RRR",
+                  marketRRR, InpMinRRR, entry, limitRRR);
+   }
 
    bool ok = PlaceBuy(entry, sl, tp, "FVG_Buy");
    if(ok) g_FVGBuyDone = true;
@@ -952,7 +979,8 @@ bool TryFVGAsianSell()
 
 // FVG Sell — DO NOT REENTER
 // Pre-checks : 02:00–10:00 AM NY (inclusive) | upside violation of Asian range | bearish FVG formed
-// Entry      : market sell on close of the FVG candle (bar[1])
+// Entry      : market sell if RRR >= 1:2; otherwise sell limit inside the FVG gap
+//              at the price that gives exactly 1:2 RRR
 // SL         : above the high of the candle before the FVG (bar[3]) + buffer
 // TP         : 1hr short-term low.
 //              Exception — if ALL Asian candles were bullish, TP = lowest point of Asian range.
@@ -966,18 +994,44 @@ bool TryFVGSell()
    double zHigh, zLow;
    if(!GetFVGZone(1, zHigh, zLow)) return false;
 
-   double entry = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    // SL above the left candle of the FVG (bar[3] in the 3-bar pattern starting at bar[1])
    double sl = iHigh(_Symbol, PERIOD_H1, 3) + PipsToPrice(InpFVGBuffer);
 
    // TP: if all Asian candles were bullish, use the Asian range low; else use ST low
    double tp;
-   if(g_AllAsianBullish && g_AsianLow > 0 && g_AsianLow < entry)
+   if(g_AllAsianBullish && g_AsianLow > 0 && g_AsianLow < bid)
       tp = g_AsianLow;
    else
       tp = GetSTLow(InpSTH_Lookback);
 
-   if(tp <= 0 || tp >= entry) return false;
+   if(tp <= 0 || tp >= bid || sl <= bid) return false;
+
+   double entry;
+   double marketRRR = (sl - bid > 0) ? (bid - tp) / (sl - bid) : 0;
+
+   if(marketRRR >= InpMinRRR)
+   {
+      entry = bid; // Market sell — RRR is acceptable
+   }
+   else
+   {
+      // Solve for limit entry that gives exactly InpMinRRR:
+      // (entry - tp) / (sl - entry) = InpMinRRR  →  entry = (tp + InpMinRRR * sl) / (1 + InpMinRRR)
+      entry = (tp + InpMinRRR * sl) / (1.0 + InpMinRRR);
+
+      if(entry <= bid) return false; // No room above bid for a sell limit
+      if(entry >= sl)  return false; // Entry at or above SL — invalid
+
+      // Clamp to FVG zone high so the limit sits inside the gap
+      entry = MathMin(entry, zHigh);
+
+      double limitRRR = (sl - entry > 0) ? (entry - tp) / (sl - entry) : 0;
+      if(limitRRR < InpMinRRR) return false;
+
+      PrintFormat("[FVG_Sell] Market RRR %.2f < %.1f — SellLimit at %.5f for 1:%.1f RRR",
+                  marketRRR, InpMinRRR, entry, limitRRR);
+   }
 
    bool ok = PlaceSell(entry, sl, tp, "FVG_Sell");
    if(ok) g_FVGSellDone = true;
