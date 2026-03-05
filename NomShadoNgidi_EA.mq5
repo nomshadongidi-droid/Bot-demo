@@ -63,8 +63,12 @@ input int    InpSTH_Lookback   = 20;   // Short-term High/Low lookback (H1 bars)
 input int    InpMagicNumber    = 20250101; // EA Magic Number
 
 input group "=== Alerts ==="
-input bool   InpPopupAlerts    = true; // Enable popup alerts on new setup
-input bool   InpPushAlerts     = false;// Enable push notifications
+input bool   InpPopupAlerts       = true;                          // Enable popup alerts on new setup
+input bool   InpPushAlerts        = false;                         // Enable push notifications
+input bool   InpEmailAlerts       = true;                          // Enable email alerts for balance milestones
+input string InpAlertEmail        = "solutionsphanaso@gmail.com";  // ⚠ Configure this address in MT5 Tools→Options→Email→To
+input double InpBalanceLowAlert   = 100.0;                         // Email alert: balance drops to or below ($)
+input double InpBalanceHighAlert  = 1000000.0;                     // Email alert: balance reaches or above ($)
 
 //============================================================
 //  GLOBAL VARIABLES
@@ -89,6 +93,10 @@ bool     g_AllAsianBullish  = false;
 bool     g_AllAsianBearish  = false;
 int      g_AsianLastBar     = -1;
 datetime g_AsianDate        = 0;
+
+// Balance alert sent-flags (lifetime, not reset daily)
+bool     g_BalanceLowAlertSent  = false; // Low balance email already sent this threshold crossing
+bool     g_BalanceHighAlertSent = false; // High balance email already sent
 
 // Per-day setup guards
 bool     g_FVGBuyDone         = false; // FVG Buy fired today  — blocks Straight Buy for the day
@@ -148,11 +156,73 @@ void OnDeinit(const int reason)
 }
 
 //============================================================
+//  BALANCE EMAIL ALERTS
+//  Fires once per threshold crossing. Low alert resets when balance
+//  recovers above the threshold so it can re-alert on a future drop.
+//  ⚠ Requires: MT5 → Tools → Options → Email → To = solutionsphanaso@gmail.com
+//============================================================
+
+void CheckBalanceAlerts()
+{
+   if(!InpEmailAlerts) return;
+
+   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   string acct    = IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN));
+   string ts      = TimeToString(TimeCurrent(), TIME_DATE | TIME_MINUTES);
+
+   // --- Low balance alert ---
+   if(!g_BalanceLowAlertSent && balance <= InpBalanceLowAlert)
+   {
+      string subj = StringFormat("⚠ LOW BALANCE on %s — $%.2f", _Symbol, balance);
+      string body = StringFormat(
+         "BALANCE ALERT — NomShadoNgidi EA\n\n"
+         "Your account balance has dropped to $%.2f.\n"
+         "Alert threshold : $%.2f\n"
+         "Account         : %s\n"
+         "Symbol          : %s\n"
+         "Time            : %s\n\n"
+         "Please review your account immediately.",
+         balance, InpBalanceLowAlert, acct, _Symbol, ts);
+
+      Print(subj);
+      SendMail(subj, body);
+      if(InpPopupAlerts) Alert(subj);
+      if(InpPushAlerts)  SendNotification(subj);
+      g_BalanceLowAlertSent = true;
+   }
+   // Reset flag once balance recovers above the threshold
+   else if(g_BalanceLowAlertSent && balance > InpBalanceLowAlert)
+      g_BalanceLowAlertSent = false;
+
+   // --- High balance milestone alert ---
+   if(!g_BalanceHighAlertSent && balance >= InpBalanceHighAlert)
+   {
+      string subj = StringFormat("🎯 MILESTONE REACHED on %s — $%.0f!", _Symbol, balance);
+      string body = StringFormat(
+         "BALANCE MILESTONE — NomShadoNgidi EA\n\n"
+         "Congratulations! Your account balance has reached $%.2f.\n"
+         "Milestone target: $%.0f\n"
+         "Account         : %s\n"
+         "Symbol          : %s\n"
+         "Time            : %s",
+         balance, InpBalanceHighAlert, acct, _Symbol, ts);
+
+      Print(subj);
+      SendMail(subj, body);
+      if(InpPopupAlerts) Alert(subj);
+      if(InpPushAlerts)  SendNotification(subj);
+      g_BalanceHighAlertSent = true;
+   }
+}
+
+//============================================================
 //  MAIN TICK — only acts on newly closed H1 bar
 //============================================================
 
 void OnTick()
 {
+   CheckBalanceAlerts(); // Runs every tick — balance monitoring is not bar-gated
+
    static datetime s_LastBar = 0;
    datetime curBar = iTime(_Symbol, PERIOD_H1, 0);
    if(curBar == s_LastBar) return;
