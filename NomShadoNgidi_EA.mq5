@@ -592,13 +592,15 @@ bool IsDailySellReversalPattern()
    return d1Bullish && d1Body > avgBody * 2.0;
 }
 
-// Checks that ALL H1 candles from London KZ open up to endHour (NY) are bearish.
+// Checks that H1 candles from London KZ open up to endHour (NY) are predominantly bearish.
+// Allows up to 1 bullish candle — a single exception does not invalidate the bearish sequence.
 // Starts from bar[2] because bar[1] is the trigger candle (bullish) and must not
 // be included in the bearish check — otherwise the setup can never fire.
 bool BearishCandlesTillHour(int endHour)
 {
    int bars = iBars(_Symbol, PERIOD_H1);
    bool checked = false;
+   int bullishCount = 0;
    for(int i = 2; i < bars; i++)   // bar[1] = trigger candle; start check from bar[2]
    {
       MqlDateTime dt;
@@ -607,10 +609,33 @@ bool BearishCandlesTillHour(int endHour)
       if(dt.hour >= InpLondonStartNY && dt.hour <= endHour)
       {
          checked = true;
-         if(IsBullishCandle(i)) return false;
+         if(IsBullishCandle(i)) bullishCount++;
       }
    }
-   return checked;
+   return checked && bullishCount <= 1;
+}
+
+// Checks that H1 candles from London KZ open up to endHour (NY) are predominantly bullish.
+// Allows up to 1 bearish candle — a single exception does not invalidate the bullish sequence.
+// Starts from bar[2] because bar[1] is the trigger candle (bearish) and must not
+// be included in the bullish check — otherwise the setup can never fire.
+bool BullishCandlesTillHour(int endHour)
+{
+   int bars = iBars(_Symbol, PERIOD_H1);
+   bool checked = false;
+   int bearishCount = 0;
+   for(int i = 2; i < bars; i++)   // bar[1] = trigger candle; start check from bar[2]
+   {
+      MqlDateTime dt;
+      TimeToStruct(BarTimeNY(i), dt); // NY bar open time
+      if(dt.hour < InpLondonStartNY) break;
+      if(dt.hour >= InpLondonStartNY && dt.hour <= endHour)
+      {
+         checked = true;
+         if(IsBearishCandle(i)) bearishCount++;
+      }
+   }
+   return checked && bearishCount <= 1;
 }
 
 //============================================================
@@ -1045,6 +1070,7 @@ bool TryFVGSell()
 bool TryStraightSell()
 {
    if(g_FVGSellDone) return false; // FVG Sell already fired today
+   if(!BullishCandlesTillHour(InpNYKillZoneNY)) return false; // bullish from 2AM to 5AM (1 bearish exception allowed)
 
    // Core condition: bar[1] closes bearish with a wick above bar[2]'s high
    if(!IsBearishCandle(1)) return false;
