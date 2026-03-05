@@ -1,8 +1,11 @@
 //+------------------------------------------------------------------+
 //|                       NomShadoNgidi_EA.mq5                       |
 //|            Expert Advisor — Nomshado Ngidi Trading Plan Q1 2025  |
-//|                 Instrument: US.30 ONLY  |  Version 1.01          |
+//|           Instrument: US_30 (US.30) ONLY  |  Version 1.01        |
 //+------------------------------------------------------------------+
+//
+//  ⚠ THIS EA WILL ONLY RUN ON US_30 (also accepted: US.30, US30)
+//  It will REFUSE to load on any other instrument.
 //
 //  SETUP MODELS IMPLEMENTED:
 //  BUY  → FVG Asian Buy | FVG Buy | Straight Buy
@@ -19,7 +22,7 @@
 //  HOW TO INSTALL:
 //  1. Copy this file to: MT5 → File → Open Data Folder → MQL5 → Experts
 //  2. Restart MetaTrader 5 (or press F5 in MetaEditor)
-//  3. Drag the EA onto your US.30 H1 chart (only instrument supported)
+//  3. Drag the EA onto your US_30 H1 chart (ONLY instrument supported)
 //  4. Ensure "Allow Algo Trading" is enabled in MT5
 //  5. Configure input parameters to match your account/timezone
 //
@@ -27,7 +30,7 @@
 #property copyright   "Nomshado Ngidi"
 #property version     "1.01"
 #property description "MT5 EA — Nomshado Ngidi Trading Plan Q1 2025"
-#property description "Instrument: US.30 ONLY"
+#property description "⚠ Instrument: US_30 (US.30) ONLY — will refuse all other symbols"
 #property description "Setups: FVG Buy/Sell, Asian FVG, Straight"
 
 #include <Trade\Trade.mqh>
