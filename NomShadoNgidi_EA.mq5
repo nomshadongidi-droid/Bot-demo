@@ -794,9 +794,6 @@ bool TryFVGBuy()
       if(entry >= ask) return false; // No room below ask for a limit
       if(entry <= sl)  return false; // Entry at or below SL — invalid
 
-      // Clamp to FVG zone low so the limit sits inside the gap
-      entry = MathMax(entry, zLow);
-
       double limitRRR = (entry - sl > 0) ? (tp - entry) / (entry - sl) : 0;
       if(limitRRR < InpMinRRR) return false;
 
@@ -1022,9 +1019,6 @@ bool TryFVGSell()
 
       if(entry <= bid) return false; // No room above bid for a sell limit
       if(entry >= sl)  return false; // Entry at or above SL — invalid
-
-      // Clamp to FVG zone high so the limit sits inside the gap
-      entry = MathMin(entry, zHigh);
 
       double limitRRR = (sl - entry > 0) ? (entry - tp) / (sl - entry) : 0;
       if(limitRRR < InpMinRRR) return false;
