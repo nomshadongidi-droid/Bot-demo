@@ -159,6 +159,92 @@ void OnDeinit(const int reason)
 }
 
 //============================================================
+//  TRADE CLOSE — RR LOGGING
+//  Fires on every deal added. When a closing deal belongs to
+//  this EA, it reconstructs entry / SL / TP from history and
+//  prints planned RR and actual RR to the Strategy Tester
+//  journal and the MT5 Experts log.
+//============================================================
+
+void OnTradeTransaction(const MqlTradeTransaction &trans,
+                        const MqlTradeRequest     &request,
+                        const MqlTradeResult      &result)
+{
+   if(trans.type != TRADE_TRANSACTION_DEAL_ADD) return;
+
+   ulong dealTicket = trans.deal;
+   if(!HistoryDealSelect(dealTicket)) return;
+
+   // Only handle our EA's closing deals on this symbol
+   if(HistoryDealGetInteger(dealTicket, DEAL_MAGIC)  != InpMagicNumber) return;
+   if(HistoryDealGetString (dealTicket, DEAL_SYMBOL) != _Symbol)        return;
+   if(HistoryDealGetInteger(dealTicket, DEAL_ENTRY)  != DEAL_ENTRY_OUT) return;
+
+   ulong  positionId = (ulong)HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
+   double closePrice = HistoryDealGetDouble (dealTicket, DEAL_PRICE);
+   double profit     = HistoryDealGetDouble (dealTicket, DEAL_PROFIT);
+   string label      = HistoryDealGetString (dealTicket, DEAL_COMMENT);
+   long   dealType   = HistoryDealGetInteger(dealTicket, DEAL_TYPE);
+
+   // Closing deal type is opposite to original direction:
+   //   closing a BUY position → DEAL_TYPE_SELL
+   //   closing a SELL position → DEAL_TYPE_BUY
+   bool wasBuy = (dealType == DEAL_TYPE_SELL);
+
+   // Load all deals and orders for this position
+   if(!HistorySelectByPosition(positionId)) return;
+
+   double entryPrice = 0;
+   for(int i = 0; i < HistoryDealsTotal(); i++)
+   {
+      ulong d = HistoryDealGetTicket(i);
+      if(HistoryDealGetInteger(d, DEAL_ENTRY) == DEAL_ENTRY_IN)
+      {
+         entryPrice = HistoryDealGetDouble(d, DEAL_PRICE);
+         break;
+      }
+   }
+   if(entryPrice <= 0) return;
+
+   // Get SL / TP from the last order associated with this position
+   double slPrice = 0, tpPrice = 0;
+   for(int i = 0; i < HistoryOrdersTotal(); i++)
+   {
+      ulong ord = HistoryOrderGetTicket(i);
+      if((ulong)HistoryOrderGetInteger(ord, ORDER_POSITION_ID) == positionId)
+      {
+         slPrice = HistoryOrderGetDouble(ord, ORDER_SL);
+         tpPrice = HistoryOrderGetDouble(ord, ORDER_TP);
+         // Keep looping — take the last modified order's SL/TP
+      }
+   }
+
+   // Calculate planned and actual RR
+   double plannedRR = 0, actualRR = 0;
+   if(wasBuy && slPrice > 0 && slPrice < entryPrice)
+   {
+      double risk = entryPrice - slPrice;
+      plannedRR   = (tpPrice > entryPrice) ? (tpPrice - entryPrice) / risk : 0;
+      actualRR    = (closePrice - entryPrice) / risk;
+   }
+   else if(!wasBuy && slPrice > 0 && slPrice > entryPrice)
+   {
+      double risk = slPrice - entryPrice;
+      plannedRR   = (tpPrice < entryPrice) ? (entryPrice - tpPrice) / risk : 0;
+      actualRR    = (entryPrice - closePrice) / risk;
+   }
+
+   string outcome = (profit > 0) ? "WIN" : (profit < 0) ? "LOSS" : "BREAKEVEN";
+
+   PrintFormat(
+      "=== RR LOG [%s] %s | Entry:%.5f  Close:%.5f  SL:%.5f  TP:%.5f"
+      " | PlannedRR:1:%.2f | ActualRR:1:%.2f | P&L:%.2f | %s ===",
+      label, wasBuy ? "BUY" : "SELL",
+      entryPrice, closePrice, slPrice, tpPrice,
+      plannedRR, actualRR, profit, outcome);
+}
+
+//============================================================
 //  BALANCE EMAIL ALERTS
 //  Fires once per threshold crossing. Low alert resets when balance
 //  recovers above the threshold so it can re-alert on a future drop.
