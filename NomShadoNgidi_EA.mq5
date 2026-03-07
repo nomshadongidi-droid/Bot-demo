@@ -254,6 +254,26 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
 //  ⚠ Requires: MT5 → Tools → Options → Email → To = solutionsphanaso@gmail.com
 //============================================================
 
+void FireMilestone(bool &flag, string milestone, double balance, string acct, string ts)
+{
+   if(flag) return;
+   string subj = StringFormat("MILESTONE REACHED — %s on account %s!", milestone, acct);
+   string body = StringFormat(
+      "BALANCE MILESTONE — NomShadoNgidi EA\n\n"
+      "Congratulations! Your balance has crossed %s.\n"
+      "Current balance : $%.2f\n"
+      "Milestone       : %s\n"
+      "Account         : %s\n"
+      "Symbol          : %s\n"
+      "Time            : %s",
+      milestone, balance, milestone, acct, _Symbol, ts);
+   Print(subj);
+   SendMail(subj, body);
+   if(InpPopupAlerts) Alert(subj);
+   if(InpPushAlerts)  SendNotification(subj);
+   flag = true;
+}
+
 void CheckBalanceAlerts()
 {
    if(!InpEmailAlerts) return;
@@ -287,33 +307,10 @@ void CheckBalanceAlerts()
       g_BalanceLowAlertSent = false;
 
    // --- Balance milestone alerts: $10k, $100k, $500k, $1M ---
-   // Helper macro: fire alert for a single milestone
-   #define FIRE_MILESTONE(FLAG, LEVEL, LABEL)                                       \
-   if(!FLAG && balance >= LEVEL)                                                    \
-   {                                                                                \
-      string subj = StringFormat("MILESTONE REACHED — " LABEL " on account %s!", acct); \
-      string body = StringFormat(                                                   \
-         "BALANCE MILESTONE — NomShadoNgidi EA\n\n"                                \
-         "Congratulations! Your balance has crossed " LABEL ".\n"                  \
-         "Current balance : $%.2f\n"                                               \
-         "Milestone       : " LABEL "\n"                                            \
-         "Account         : %s\n"                                                  \
-         "Symbol          : %s\n"                                                  \
-         "Time            : %s",                                                   \
-         balance, acct, _Symbol, ts);                                              \
-      Print(subj);                                                                  \
-      SendMail(subj, body);                                                         \
-      if(InpPopupAlerts) Alert(subj);                                               \
-      if(InpPushAlerts)  SendNotification(subj);                                   \
-      FLAG = true;                                                                  \
-   }
-
-   FIRE_MILESTONE(g_Milestone10k,  10000.0,   "$10,000")
-   FIRE_MILESTONE(g_Milestone100k, 100000.0,  "$100,000")
-   FIRE_MILESTONE(g_Milestone500k, 500000.0,  "$500,000")
-   FIRE_MILESTONE(g_Milestone1m,   1000000.0, "$1,000,000")
-
-   #undef FIRE_MILESTONE
+   if(balance >= 10000.0)    FireMilestone(g_Milestone10k,  "$10,000",    balance, acct, ts);
+   if(balance >= 100000.0)   FireMilestone(g_Milestone100k, "$100,000",   balance, acct, ts);
+   if(balance >= 500000.0)   FireMilestone(g_Milestone500k, "$500,000",   balance, acct, ts);
+   if(balance >= 1000000.0)  FireMilestone(g_Milestone1m,   "$1,000,000", balance, acct, ts);
 }
 
 //============================================================
