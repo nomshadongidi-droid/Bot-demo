@@ -71,7 +71,7 @@ input bool   InpPushAlerts        = false;                         // Enable pus
 input bool   InpEmailAlerts       = true;                          // Enable email alerts for balance milestones
 input string InpAlertEmail        = "solutionsphanaso@gmail.com";  // ⚠ Configure this address in MT5 Tools→Options→Email→To
 input double InpBalanceLowAlert   = 100.0;                         // Email alert: balance drops to or below ($)
-input double InpBalanceHighAlert  = 1000000.0;                     // Email alert: balance reaches or above ($)
+// Milestone alerts fire once each when balance first crosses: $10,000 | $100,000 | $500,000 | $1,000,000
 
 //============================================================
 //  GLOBAL VARIABLES
@@ -99,7 +99,10 @@ datetime g_AsianDate        = 0;
 
 // Balance alert sent-flags (lifetime, not reset daily)
 bool     g_BalanceLowAlertSent  = false; // Low balance email already sent this threshold crossing
-bool     g_BalanceHighAlertSent = false; // High balance email already sent
+bool     g_Milestone10k         = false; // $10,000 milestone alert sent
+bool     g_Milestone100k        = false; // $100,000 milestone alert sent
+bool     g_Milestone500k        = false; // $500,000 milestone alert sent
+bool     g_Milestone1m          = false; // $1,000,000 milestone alert sent
 
 // Per-day setup guards
 bool     g_FVGBuyDone         = false; // FVG Buy fired today  — blocks Straight Buy for the day
@@ -283,25 +286,36 @@ void CheckBalanceAlerts()
    else if(g_BalanceLowAlertSent && balance > InpBalanceLowAlert)
       g_BalanceLowAlertSent = false;
 
-   // --- High balance milestone alert ---
-   if(!g_BalanceHighAlertSent && balance >= InpBalanceHighAlert)
-   {
-      string subj = StringFormat("🎯 MILESTONE REACHED on %s — $%.0f!", _Symbol, balance);
-      string body = StringFormat(
-         "BALANCE MILESTONE — NomShadoNgidi EA\n\n"
-         "Congratulations! Your account balance has reached $%.2f.\n"
-         "Milestone target: $%.0f\n"
-         "Account         : %s\n"
-         "Symbol          : %s\n"
-         "Time            : %s",
-         balance, InpBalanceHighAlert, acct, _Symbol, ts);
+   // --- Balance milestone alerts: $10k, $100k, $500k, $1M ---
+   struct MilestoneEntry { double level; bool &flag; string label; };
 
-      Print(subj);
-      SendMail(subj, body);
-      if(InpPopupAlerts) Alert(subj);
-      if(InpPushAlerts)  SendNotification(subj);
-      g_BalanceHighAlertSent = true;
+   // Helper lambda-style: fire alert for a single milestone
+   #define FIRE_MILESTONE(FLAG, LEVEL, LABEL)                                       \
+   if(!FLAG && balance >= LEVEL)                                                    \
+   {                                                                                \
+      string subj = StringFormat("MILESTONE REACHED — " LABEL " on account %s!", acct); \
+      string body = StringFormat(                                                   \
+         "BALANCE MILESTONE — NomShadoNgidi EA\n\n"                                \
+         "Congratulations! Your balance has crossed " LABEL ".\n"                  \
+         "Current balance : $%.2f\n"                                               \
+         "Milestone       : " LABEL "\n"                                            \
+         "Account         : %s\n"                                                  \
+         "Symbol          : %s\n"                                                  \
+         "Time            : %s",                                                   \
+         balance, acct, _Symbol, ts);                                              \
+      Print(subj);                                                                  \
+      SendMail(subj, body);                                                         \
+      if(InpPopupAlerts) Alert(subj);                                               \
+      if(InpPushAlerts)  SendNotification(subj);                                   \
+      FLAG = true;                                                                  \
    }
+
+   FIRE_MILESTONE(g_Milestone10k,  10000.0,   "$10,000")
+   FIRE_MILESTONE(g_Milestone100k, 100000.0,  "$100,000")
+   FIRE_MILESTONE(g_Milestone500k, 500000.0,  "$500,000")
+   FIRE_MILESTONE(g_Milestone1m,   1000000.0, "$1,000,000")
+
+   #undef FIRE_MILESTONE
 }
 
 //============================================================
