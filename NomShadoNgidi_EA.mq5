@@ -287,9 +287,7 @@ void CheckBalanceAlerts()
       g_BalanceLowAlertSent = false;
 
    // --- Balance milestone alerts: $10k, $100k, $500k, $1M ---
-   struct MilestoneEntry { double level; bool &flag; string label; };
-
-   // Helper lambda-style: fire alert for a single milestone
+   // Helper macro: fire alert for a single milestone
    #define FIRE_MILESTONE(FLAG, LEVEL, LABEL)                                       \
    if(!FLAG && balance >= LEVEL)                                                    \
    {                                                                                \
