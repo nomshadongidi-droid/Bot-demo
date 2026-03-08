@@ -930,7 +930,8 @@ bool ScanBuySetups()
 // Trigger: bullish FVG in last Asian candle | 2–10AM | Daily buy reversal confirmed
 // Entry  : market buy instantly on H1 candle close that forms the FVG
 // SL     : below the lowest point of the Asian session range
-// TP     : 1hr short-term high
+// TP     : 1hr short-term high; if Asian high is the highest point (no equal highs above),
+//          use 1:3 RR instead
 bool TryFVGAsianBuy()
 {
    if(g_AsianLastBar < 0) return false;
@@ -945,6 +946,15 @@ bool TryFVGAsianBuy()
    double sl = g_AsianLow - PipsToPrice(InpFVGBuffer);
 
    double tp = GetSTHigh(InpSTH_Lookback);
+
+   // If Asian session high is the highest point (no equal highs above it to target),
+   // fall back to a 1:3 RR take profit.
+   if(tp <= g_AsianHigh)
+   {
+      tp = entry + 3.0 * (entry - sl);
+      PrintFormat("[FVG_Asian_Buy] Asian high is highest point — no equal highs above. Using 1:3 RR TP: %.5f", tp);
+   }
+
    if(tp <= entry) return false;
 
    return PlaceBuy(entry, sl, tp, "FVG_Asian_Buy");
@@ -955,7 +965,8 @@ bool TryFVGAsianBuy()
 // Entry  : market buy if RRR >= 1:2; otherwise buy limit inside the FVG gap
 //          at the price that gives exactly 1:2 RRR
 // SL     : below left candle of FVG (candle before the gap)
-// TP     : 1hr short-term high
+// TP     : 1hr short-term high; if Asian high is the highest point (no equal highs above),
+//          use 1:3 RR instead
 bool TryFVGBuy()
 {
    if(g_StraightBuyDone)       return false; // Straight Buy already fired today
@@ -969,7 +980,17 @@ bool TryFVGBuy()
    // Left candle of FVG at bar[1] is bar[3]
    double sl  = iLow(_Symbol, PERIOD_H1, 3) - PipsToPrice(InpFVGBuffer);
    double tp  = GetSTHigh(InpSTH_Lookback);
-   if(tp <= ask || sl >= ask) return false;
+   if(sl >= ask) return false;
+
+   // If Asian session high is the highest point (no equal highs above it to target),
+   // fall back to a 1:3 RR take profit.
+   if(tp <= g_AsianHigh)
+   {
+      tp = ask + 3.0 * (ask - sl);
+      PrintFormat("[FVG_Buy] Asian high is highest point — no equal highs above. Using 1:3 RR TP: %.5f", tp);
+   }
+
+   if(tp <= ask) return false;
 
    double entry;
    double marketRRR = (ask - sl > 0) ? (tp - ask) / (ask - sl) : 0;
