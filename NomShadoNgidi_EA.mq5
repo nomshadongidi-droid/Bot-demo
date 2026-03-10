@@ -597,22 +597,22 @@ void AnalyseAsianSession()
 //============================================================
 //  FVG (FAIR VALUE GAP) DETECTION
 //
-//  A 3-candle pattern:
-//    LEFT  = bar[startBar + 2]  (oldest)
-//    MIDDLE= bar[startBar + 1]  (impulse)
-//    RIGHT = bar[startBar]      (newest / confirmation)
+//  2-candle pattern:
+//    Candle 1 = bar[startBar + 1]  (previous closed candle)
+//    Candle 2 = bar[startBar]      (just closed candle)
+//    Candle 3 = bar[0]             (current forming candle = ENTRY)
 //
-//  Bullish FVG : LEFT.high < RIGHT.low  → upward gap, price moved up fast
-//  Bearish FVG : LEFT.low  > RIGHT.high → downward gap, price moved down fast
+//  Bullish FVG : candle1.high <= candle2.low  → gap up   (any size gap counts)
+//  Bearish FVG : candle1.low  >= candle2.high → gap down (any size gap counts)
+//
+//  Bar numbering (newest → oldest):
+//    bar[0] = current forming candle  (ENTRY — candle 3)
+//    bar[1] = most recently closed    (candle 2 — completes the FVG)
+//    bar[2] = previous closed candle  (candle 1 — starts the FVG)
+//    bar[3] = candle before the pair  (SL reference)
 //
 //  Returns: 1 = bullish, -1 = bearish, 0 = no FVG
 //============================================================
-
-// FVG is a 2-candle pattern:
-//   Candle 1 = bar[startBar + 1]  (previous candle)
-//   Candle 2 = bar[startBar]      (just closed candle)
-// Bullish FVG : candle1.high <= candle2.low  → gap up   (any size gap counts)
-// Bearish FVG : candle1.low  >= candle2.high → gap down (any size gap counts)
 int DetectFVG(int startBar)
 {
    if(startBar < 1 || startBar + 1 >= iBars(_Symbol, PERIOD_H1)) return 0;
