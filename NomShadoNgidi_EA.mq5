@@ -1043,6 +1043,8 @@ bool TryStraightBuy()
    double sl    = MathMin(iLow(_Symbol, PERIOD_H1, 1),
                            iLow(_Symbol, PERIOD_H1, 2)) - PipsToPrice(InpFVGBuffer);
 
+   if(sl >= entry) return false; // SL must be below entry for a buy
+
    // TP: if all Asian candles were bearish, target the Asian session open level; else ST high
    double tp;
    if(g_AllAsianBearish && g_AsianHigh > 0 && g_AsianHigh > entry)
@@ -1282,6 +1284,8 @@ bool TryStraightSell()
    // SL above the highest point between the entry candle's wick and the prior candle
    double sl = MathMax(iHigh(_Symbol, PERIOD_H1, 1),
                        iHigh(_Symbol, PERIOD_H1, 2)) + PipsToPrice(InpFVGBuffer);
+
+   if(sl <= entry) return false; // SL must be above entry for a sell
 
    // TP: Asian low if all Asian candles were bearish; otherwise 1hr short-term low
    double tp;
