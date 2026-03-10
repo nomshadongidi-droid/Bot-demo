@@ -989,8 +989,8 @@ bool TryFVGBuy()
    if(!GetFVGZone(1, zHigh, zLow)) return false;
 
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   // SL below candle 1 of the FVG (bar[2])
-   double sl  = iLow(_Symbol, PERIOD_H1, 2) - PipsToPrice(InpFVGBuffer);
+   // SL below the candle before the FVG pair (bar[3])
+   double sl  = iLow(_Symbol, PERIOD_H1, 3) - PipsToPrice(InpFVGBuffer);
    double tp  = GetSTHigh(InpSTH_Lookback);
    if(sl >= ask) return false;
 
@@ -1193,8 +1193,8 @@ bool TryFVGAsianSell()
    double entry = (zHigh + zLow) / 2.0;
    if(entry <= bid) return false;
 
-   // SL = above candle 1 of the FVG (bar[g_AsianLastBar + 1])
-   double sl = iHigh(_Symbol, PERIOD_H1, g_AsianLastBar + 1) + PipsToPrice(InpFVGBuffer);
+   // SL = above the candle before the FVG pair
+   double sl = iHigh(_Symbol, PERIOD_H1, g_AsianLastBar + 2) + PipsToPrice(InpFVGBuffer);
 
    // TP = 1hr short-term low (automated).
    // Alert reminds trader to also check daily equal lows for the primary TP level.
@@ -1227,8 +1227,8 @@ bool TryFVGSell()
    if(!GetFVGZone(1, zHigh, zLow)) return false;
 
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   // SL above candle 1 of the FVG (bar[2])
-   double sl = iHigh(_Symbol, PERIOD_H1, 2) + PipsToPrice(InpFVGBuffer);
+   // SL above the candle before the FVG pair (bar[3])
+   double sl = iHigh(_Symbol, PERIOD_H1, 3) + PipsToPrice(InpFVGBuffer);
 
    // TP: if all Asian candles were bullish, use the Asian range low; else use ST low
    double tp;
