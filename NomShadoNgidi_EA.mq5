@@ -919,8 +919,9 @@ bool ScanBuySetups()
    if(!triggered && hr >= sLondon && hr < sEnd)
       triggered = TryFVGBuy();
 
-   // --- Priority 3: Straight Buy | NY Kill Zone only (after 05:00 NY) ---
-   if(!triggered && hr >= sNYKZ && hr < sEnd)
+   // --- Priority 3: Straight Buy | after 05:00 candle closes (06:00–10:00 NY) ---
+   // hr > sNYKZ ensures bar[1] is the 5am candle (closed), not the 4am candle.
+   if(!triggered && hr > sNYKZ && hr < sEnd)
       triggered = TryStraightBuy();
 
    return triggered;
@@ -1138,9 +1139,10 @@ bool ScanSellSetups()
    if(!triggered && hr >= sLondon && hr <= sEnd)
       triggered = TryFVGSell();
 
-   // --- Priority 3: Straight Sell (Bearish Wick) | NY session start onwards (05:00–10:00 NY incl.) ---
+   // --- Priority 3: Straight Sell (Bearish Wick) | after 05:00 candle closes (06:00–10:00 NY incl.) ---
+   // hr > sNYKZ ensures bar[1] is the 5am candle (closed), not the 4am candle.
    // Allow re-entry: no single-fire guard — setup can retrigger on a new valid bar
-   if(!triggered && hr >= sNYKZ && hr <= sEnd)
+   if(!triggered && hr > sNYKZ && hr <= sEnd)
       triggered = TryStraightSell();
 
    return triggered;
