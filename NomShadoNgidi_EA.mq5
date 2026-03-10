@@ -608,37 +608,42 @@ void AnalyseAsianSession()
 //  Returns: 1 = bullish, -1 = bearish, 0 = no FVG
 //============================================================
 
+// FVG is a 2-candle pattern:
+//   Candle 1 = bar[startBar + 1]  (previous candle)
+//   Candle 2 = bar[startBar]      (just closed candle)
+// Bullish FVG : candle1.high <= candle2.low  → gap up   (any size gap counts)
+// Bearish FVG : candle1.low  >= candle2.high → gap down (any size gap counts)
 int DetectFVG(int startBar)
 {
-   if(startBar < 1 || startBar + 2 >= iBars(_Symbol, PERIOD_H1)) return 0;
+   if(startBar < 1 || startBar + 1 >= iBars(_Symbol, PERIOD_H1)) return 0;
 
-   double leftHigh  = iHigh(_Symbol, PERIOD_H1, startBar + 2);
-   double leftLow   = iLow (_Symbol, PERIOD_H1, startBar + 2);
-   double rightLow  = iLow (_Symbol, PERIOD_H1, startBar);
-   double rightHigh = iHigh(_Symbol, PERIOD_H1, startBar);
+   double c1High = iHigh(_Symbol, PERIOD_H1, startBar + 1); // candle 1
+   double c1Low  = iLow (_Symbol, PERIOD_H1, startBar + 1);
+   double c2Low  = iLow (_Symbol, PERIOD_H1, startBar);     // candle 2
+   double c2High = iHigh(_Symbol, PERIOD_H1, startBar);
 
-   if(leftHigh <= rightLow)  return  1;  // Bullish FVG (slightest gap counts)
-   if(leftLow  >= rightHigh) return -1;  // Bearish FVG (slightest gap counts)
+   if(c1High <= c2Low)  return  1;  // Bullish FVG
+   if(c1Low  >= c2High) return -1;  // Bearish FVG
    return 0;
 }
 
-// Returns the price range (zone) of a detected FVG
-// For bullish FVG: zoneLow = left.high, zoneHigh = right.low  (the gap going up)
-// For bearish FVG: zoneHigh= left.low,  zoneLow  = right.high (the gap going down)
+// Returns the price zone of the detected FVG gap.
+// Bullish FVG: zoneLow = candle1.high, zoneHigh = candle2.low
+// Bearish FVG: zoneHigh= candle1.low,  zoneLow  = candle2.high
 bool GetFVGZone(int startBar, double &zoneHigh, double &zoneLow)
 {
    int type = DetectFVG(startBar);
    if(type == 0) return false;
 
-   if(type == 1) // Bullish: gap from left.high up to right.low
+   if(type == 1) // Bullish: gap from candle1.high up to candle2.low
    {
-      zoneLow  = iHigh(_Symbol, PERIOD_H1, startBar + 2); // bottom of gap
-      zoneHigh = iLow (_Symbol, PERIOD_H1, startBar);     // top of gap
+      zoneLow  = iHigh(_Symbol, PERIOD_H1, startBar + 1); // bottom of gap (candle1 high)
+      zoneHigh = iLow (_Symbol, PERIOD_H1, startBar);     // top of gap    (candle2 low)
    }
-   else // Bearish: gap from right.high up to left.low
+   else // Bearish: gap from candle2.high up to candle1.low
    {
-      zoneHigh = iLow (_Symbol, PERIOD_H1, startBar + 2); // top of gap (left.low)
-      zoneLow  = iHigh(_Symbol, PERIOD_H1, startBar);     // bottom of gap (right.high)
+      zoneHigh = iLow (_Symbol, PERIOD_H1, startBar + 1); // top of gap    (candle1 low)
+      zoneLow  = iHigh(_Symbol, PERIOD_H1, startBar);     // bottom of gap (candle2 high)
    }
 
    return (zoneHigh > zoneLow);
@@ -984,8 +989,8 @@ bool TryFVGBuy()
    if(!GetFVGZone(1, zHigh, zLow)) return false;
 
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   // Left candle of FVG at bar[1] is bar[3]
-   double sl  = iLow(_Symbol, PERIOD_H1, 3) - PipsToPrice(InpFVGBuffer);
+   // SL below candle 1 of the FVG (bar[2])
+   double sl  = iLow(_Symbol, PERIOD_H1, 2) - PipsToPrice(InpFVGBuffer);
    double tp  = GetSTHigh(InpSTH_Lookback);
    if(sl >= ask) return false;
 
@@ -1188,8 +1193,8 @@ bool TryFVGAsianSell()
    double entry = (zHigh + zLow) / 2.0;
    if(entry <= bid) return false;
 
-   // SL = above the left candle of the FVG (bar that is 2 back from the right candle)
-   double sl = iHigh(_Symbol, PERIOD_H1, g_AsianLastBar + 2) + PipsToPrice(InpFVGBuffer);
+   // SL = above candle 1 of the FVG (bar[g_AsianLastBar + 1])
+   double sl = iHigh(_Symbol, PERIOD_H1, g_AsianLastBar + 1) + PipsToPrice(InpFVGBuffer);
 
    // TP = 1hr short-term low (automated).
    // Alert reminds trader to also check daily equal lows for the primary TP level.
@@ -1222,8 +1227,8 @@ bool TryFVGSell()
    if(!GetFVGZone(1, zHigh, zLow)) return false;
 
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   // SL above the left candle of the FVG (bar[3] in the 3-bar pattern starting at bar[1])
-   double sl = iHigh(_Symbol, PERIOD_H1, 3) + PipsToPrice(InpFVGBuffer);
+   // SL above candle 1 of the FVG (bar[2])
+   double sl = iHigh(_Symbol, PERIOD_H1, 2) + PipsToPrice(InpFVGBuffer);
 
    // TP: if all Asian candles were bullish, use the Asian range low; else use ST low
    double tp;
