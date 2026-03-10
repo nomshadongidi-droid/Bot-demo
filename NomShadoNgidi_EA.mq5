@@ -112,6 +112,10 @@ bool     g_StraightSellDone   = false; // Straight Sell fired today — blocks F
 bool     g_AsianSellSLHit     = false; // FVG Asian Sell closed at SL loss today
 bool     g_AsianSellReentered = false; // Re-entry buy already placed after Asian Sell SL
 
+// Bar tracker — initialised in OnInit so EA never fires on the bar that was already
+// open when it was loaded. Trading only starts from the NEXT bar close.
+datetime g_LastBar            = 0;
+
 //============================================================
 //  INITIALISATION
 //============================================================
@@ -152,6 +156,9 @@ int OnInit()
       Print("Monday filter: ACTIVE (no trades on Mondays)");
 
    Print("REMINDER: Check DXY, key Daily/Weekly levels, and news before each session.");
+
+   // Skip the bar that is already open when EA loads — only act on future bar closes.
+   g_LastBar = iTime(_Symbol, PERIOD_H1, 0);
 
    return INIT_SUCCEEDED;
 }
@@ -321,10 +328,9 @@ void OnTick()
 {
    CheckBalanceAlerts(); // Runs every tick — balance monitoring is not bar-gated
 
-   static datetime s_LastBar = 0;
    datetime curBar = iTime(_Symbol, PERIOD_H1, 0);
-   if(curBar == s_LastBar) return;
-   s_LastBar = curBar;
+   if(curBar == g_LastBar) return;
+   g_LastBar = curBar;
 
    // --- Pre-trade guards ---
    ResetDailyCount();
