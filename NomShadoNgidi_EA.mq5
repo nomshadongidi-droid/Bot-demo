@@ -617,8 +617,8 @@ int DetectFVG(int startBar)
    double rightLow  = iLow (_Symbol, PERIOD_H1, startBar);
    double rightHigh = iHigh(_Symbol, PERIOD_H1, startBar);
 
-   if(leftHigh < rightLow)  return  1;  // Bullish FVG
-   if(leftLow  > rightHigh) return -1;  // Bearish FVG
+   if(leftHigh <= rightLow)  return  1;  // Bullish FVG (slightest gap counts)
+   if(leftLow  >= rightHigh) return -1;  // Bearish FVG (slightest gap counts)
    return 0;
 }
 
