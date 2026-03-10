@@ -1035,7 +1035,13 @@ bool TryFVGBuy()
 //          If all Asian candles were bearish, TP = Asian session start level (g_AsianHigh).
 bool TryStraightBuy()
 {
-   if(g_FVGBuyDone)                              return false; // FVG Buy already fired today
+   if(g_FVGBuyDone) return false; // FVG Buy already fired today
+
+   // bar[1] must be the 5AM candle — only fire on the 6AM bar close
+   MqlDateTime bar1Dt;
+   TimeToStruct(BarTimeNY(1), bar1Dt);
+   if(bar1Dt.hour != InpNYKillZoneNY) return false;
+
    if(!BearishCandlesTillHour(InpNYKillZoneNY)) return false; // bearish from 2AM to 5AM
    if(!IsBullishCandle(1))                       return false;
 
@@ -1269,6 +1275,12 @@ bool TryFVGSell()
 bool TryStraightSell()
 {
    if(g_FVGSellDone) return false; // FVG Sell already fired today
+
+   // bar[1] must be the 5AM candle — only fire on the 6AM bar close
+   MqlDateTime bar1Dt;
+   TimeToStruct(BarTimeNY(1), bar1Dt);
+   if(bar1Dt.hour != InpNYKillZoneNY) return false;
+
    if(!BullishCandlesTillHour(InpNYKillZoneNY)) return false; // bullish from 2AM to 5AM (1 bearish exception allowed)
 
    // Core condition: bar[1] closes bearish with a wick above bar[2]'s high
