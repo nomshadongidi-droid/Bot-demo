@@ -706,13 +706,16 @@ bool IsBearishCandle(int bar) { return iClose(_Symbol, PERIOD_H1, bar) < iOpen(_
 
 bool HasDownsideViolation()
 {
-   // Last closed candle wicked or broke below the previous candle's low
-   return iLow(_Symbol, PERIOD_H1, 1) < iLow(_Symbol, PERIOD_H1, 2);
+   // Candle 1 of the FVG (bar[2]) swept lower than the candle before the FVG pair (bar[3])
+   // — confirms the downward push that precedes the bullish FVG reversal
+   return iLow(_Symbol, PERIOD_H1, 2) < iLow(_Symbol, PERIOD_H1, 3);
 }
 
 bool HasUpsideViolation()
 {
-   return iHigh(_Symbol, PERIOD_H1, 1) > iHigh(_Symbol, PERIOD_H1, 2);
+   // Candle 1 of the FVG (bar[2]) swept higher than the candle before the FVG pair (bar[3])
+   // — confirms the upward push that precedes the bearish FVG reversal
+   return iHigh(_Symbol, PERIOD_H1, 2) > iHigh(_Symbol, PERIOD_H1, 3);
 }
 
 double AvgBodySize(int fromBar = 2, int count = 20)
