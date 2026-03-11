@@ -1153,18 +1153,18 @@ bool ScanSellSetups()
 
    int sFVGAsianStart = NYtoServer(InpFVGAsianWindowStartNY);
 
-   // --- Priority 1: FVG Asian Sell | 01:00–10:00 AM NY (inclusive) ---
-   if(!triggered && g_AsianFVGBearish && hr >= sFVGAsianStart && hr <= sEnd)
+   // --- Priority 1: FVG Asian Sell | 01:00–09:59 AM NY (no trades at or after 10:00) ---
+   if(!triggered && g_AsianFVGBearish && hr >= sFVGAsianStart && hr < sEnd)
       triggered = TryFVGAsianSell();
 
-   // --- Priority 2: FVG Sell (upside violation + bearish FVG) | 02:00–10:00 AM NY (inclusive) ---
-   if(!triggered && hr >= sLondon && hr <= sEnd)
+   // --- Priority 2: FVG Sell (upside violation + bearish FVG) | 02:00–09:59 AM NY ---
+   if(!triggered && hr >= sLondon && hr < sEnd)
       triggered = TryFVGSell();
 
-   // --- Priority 3: Straight Sell (Bearish Wick) | after 05:00 candle closes (06:00–10:00 NY incl.) ---
+   // --- Priority 3: Straight Sell (Bearish Wick) | after 05:00 candle closes (06:00–09:59 NY) ---
    // hr > sNYKZ ensures bar[1] is the 5am candle (closed), not the 4am candle.
    // Allow re-entry: no single-fire guard — setup can retrigger on a new valid bar
-   if(!triggered && hr > sNYKZ && hr <= sEnd)
+   if(!triggered && hr > sNYKZ && hr < sEnd)
       triggered = TryStraightSell();
 
    return triggered;
