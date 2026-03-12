@@ -63,6 +63,7 @@ input group "=== Trade Settings ==="
 input int    InpMaxDailyTrades = 2;    // Max trades per day (plan: max 2)
 input bool   InpAllowMonday    = false;// Allow Monday trading (plan: NO)
 input int    InpSTH_Lookback   = 20;   // Short-term High/Low lookback (H1 bars)
+input int    InpTPAsianProximityPips = 50; // Straight Buy: if TP is within this many pips of Asian High, use next ST Low above Asian as TP
 input int    InpMagicNumber    = 20250101; // EA Magic Number
 
 input group "=== Alerts ==="
@@ -701,6 +702,34 @@ double GetSTLow(int lookback = 20)
    return (l == DBL_MAX) ? 0 : l;
 }
 
+// Short-term low ABOVE the Asian High: bearish body immediately followed by bullish body,
+// where the meeting level is above g_AsianHigh. Used when Straight Buy TP is too close
+// to the Asian session range — gives the trade room to breathe past the Asian level.
+double GetSTLowAboveAsian(int lookback = 20)
+{
+   int lim = MathMin(lookback, iBars(_Symbol, PERIOD_H1) - 2);
+
+   for(int i = 1; i <= lim; i++)
+   {
+      // bar[i+1] bearish → bar[i] bullish: bodies meeting at a low
+      if(IsBullishCandle(i) && IsBearishCandle(i + 1))
+      {
+         double level = iOpen(_Symbol, PERIOD_H1, i); // Open of bullish candle = meeting point
+         if(level > g_AsianHigh) return level;
+      }
+   }
+
+   // Fallback: lowest high above Asian high in lookback
+   double best = DBL_MAX;
+   for(int i = 1; i <= lim; i++)
+   {
+      double barHigh = iHigh(_Symbol, PERIOD_H1, i);
+      if(barHigh > g_AsianHigh && barHigh < best)
+         best = barHigh;
+   }
+   return (best == DBL_MAX) ? 0 : best;
+}
+
 bool IsBullishCandle(int bar) { return iClose(_Symbol, PERIOD_H1, bar) > iOpen(_Symbol, PERIOD_H1, bar); }
 bool IsBearishCandle(int bar) { return iClose(_Symbol, PERIOD_H1, bar) < iOpen(_Symbol, PERIOD_H1, bar); }
 
@@ -1041,6 +1070,8 @@ bool TryFVGBuy()
 // SL     : below current bullish candle or previous candle (whichever is lower)
 // TP     : 1hr short-term high.
 //          If all Asian candles were bearish, TP = Asian session start level (g_AsianHigh).
+//          If TP (ST high) is within InpTPAsianProximityPips of Asian High, TP is moved to
+//          the next short-term low above the Asian session (gives trade room past the Asian range).
 bool TryStraightBuy()
 {
    if(g_FVGBuyDone) return false; // FVG Buy already fired today
@@ -1064,7 +1095,22 @@ bool TryStraightBuy()
    if(g_AllAsianBearish && g_AsianHigh > 0 && g_AsianHigh > entry)
       tp = g_AsianHigh;
    else
+   {
       tp = GetSTHigh(InpSTH_Lookback);
+
+      // If TP is within InpTPAsianProximityPips of the Asian High, it's too close to the
+      // Asian session range. Move TP to the next short-term low above the Asian High instead.
+      if(tp > 0 && g_AsianHigh > 0 && (tp - g_AsianHigh) <= PipsToPrice(InpTPAsianProximityPips))
+      {
+         double altTp = GetSTLowAboveAsian(InpSTH_Lookback);
+         if(altTp > tp)
+         {
+            PrintFormat("[Straight_Buy] TP %.5f too close to Asian High %.5f (within %d pips). Moving TP to next ST Low above Asian: %.5f",
+                        tp, g_AsianHigh, InpTPAsianProximityPips, altTp);
+            tp = altTp;
+         }
+      }
+   }
 
    if(tp <= entry) return false;
 
