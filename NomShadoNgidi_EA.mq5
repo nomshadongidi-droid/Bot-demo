@@ -480,10 +480,9 @@ double CalcLotSize(double slPips)
    double minLot  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    double maxLot  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
 
-   // Round down to nearest broker step, then clamp to broker min/max.
-   // If rounding produces 0 we still use minLot so the trade is never
-   // blocked purely because of leverage / lot-size constraints.
-   lots = MathFloor(lots / step) * step;
+   // Round UP to nearest broker step, then clamp to broker min/max.
+   // e.g. 0.0178 with step=0.01 → ceil(1.78)*0.01 = 0.02
+   lots = MathCeil(lots / step) * step;
    lots = MathMax(minLot, MathMin(maxLot, lots));
 
    PrintFormat("CalcLotSize: balance=%.2f risk=%.2f SL=%.1f pips → lots=%.2f (min=%.2f max=%.2f)",
