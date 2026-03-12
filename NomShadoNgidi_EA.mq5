@@ -57,7 +57,7 @@ input group "=== Risk Management ==="
 input double InpMinRRR         = 2.0;  // Minimum Risk:Reward Ratio (1:2 per plan)
 
 input group "=== Stop Loss Settings ==="
-input int    InpFVGBuffer      = 5;    // SL/entry buffer in pips (5 = AvaTrade spread breather)
+input int    InpFVGBuffer      = 10;   // SL/entry buffer in pips (10 = breathing room)
 
 input group "=== Trade Settings ==="
 input int    InpMaxDailyTrades = 2;    // Max trades per day (plan: max 2)
