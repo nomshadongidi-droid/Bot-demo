@@ -480,9 +480,9 @@ double CalcLotSize(double slPips)
    double minLot  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    double maxLot  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
 
-   // Round UP to nearest broker step, then clamp to broker min/max.
-   // e.g. 0.0178 with step=0.01 → ceil(1.78)*0.01 = 0.02
-   lots = MathCeil(lots / step) * step;
+   // Standard rounding to nearest broker step: >=0.5 rounds up, <0.5 rounds down.
+   // e.g. 0.0178 → 0.02 | 0.255 → 0.26 | 0.014 → 0.01
+   lots = MathRound(lots / step) * step;
    lots = MathMax(minLot, MathMin(maxLot, lots));
 
    PrintFormat("CalcLotSize: balance=%.2f risk=%.2f SL=%.1f pips → lots=%.2f (min=%.2f max=%.2f)",
