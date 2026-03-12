@@ -701,29 +701,40 @@ double GetSTLow(int lookback = 20)
    return (l == DBL_MAX) ? 0 : l;
 }
 
-// Short-term low ABOVE the Asian High: bearish body immediately followed by bullish body,
-// where the meeting level is above g_AsianHigh. Used when Straight Buy TP is too close
-// to the Asian session range — gives the trade room to breathe past the Asian level.
-double GetSTLowAboveAsian(int lookback = 20)
+// Short-term level ABOVE a given price: finds a ST support/resistance meeting point
+// strictly above minLevel. Used when Straight Buy TP is too close to the Asian High —
+// we pass the current TP as minLevel, so the returned level is guaranteed to exceed it.
+double GetSTLowAboveLevel(double minLevel, int lookback = 20)
 {
    int lim = MathMin(lookback, iBars(_Symbol, PERIOD_H1) - 2);
 
+   // Primary: STL pattern (bearish → bullish body) whose meeting point is above minLevel
    for(int i = 1; i <= lim; i++)
    {
-      // bar[i+1] bearish → bar[i] bullish: bodies meeting at a low
+      // bar[i+1] bearish → bar[i] bullish: bodies meeting at a support low
       if(IsBullishCandle(i) && IsBearishCandle(i + 1))
       {
          double level = iOpen(_Symbol, PERIOD_H1, i); // Open of bullish candle = meeting point
-         if(level > g_AsianHigh) return level;
+         if(level > minLevel) return level;
       }
    }
 
-   // Fallback: lowest high above Asian high in lookback
+   // Fallback: STH pattern (bullish → bearish body) above minLevel
+   for(int i = 1; i <= lim; i++)
+   {
+      if(IsBearishCandle(i) && IsBullishCandle(i + 1))
+      {
+         double level = iOpen(_Symbol, PERIOD_H1, i);
+         if(level > minLevel) return level;
+      }
+   }
+
+   // Last resort: lowest bar high that is still above minLevel
    double best = DBL_MAX;
    for(int i = 1; i <= lim; i++)
    {
       double barHigh = iHigh(_Symbol, PERIOD_H1, i);
-      if(barHigh > g_AsianHigh && barHigh < best)
+      if(barHigh > minLevel && barHigh < best)
          best = barHigh;
    }
    return (best == DBL_MAX) ? 0 : best;
@@ -1098,13 +1109,14 @@ bool TryStraightBuy()
       tp = GetSTHigh(InpSTH_Lookback);
 
       // If TP is within InpTPAsianProximityPips of the Asian High, it's too close to the
-      // Asian session range. Move TP to the next short-term low above the Asian High instead.
+      // Asian session range. Search for the next meaningful level strictly ABOVE the current TP.
+      // Passing tp as minLevel guarantees altTp > tp so the trade has room past the Asian range.
       if(tp > 0 && g_AsianHigh > 0 && (tp - g_AsianHigh) <= PipsToPrice(InpTPAsianProximityPips))
       {
-         double altTp = GetSTLowAboveAsian(InpSTH_Lookback);
-         if(altTp > tp)
+         double altTp = GetSTLowAboveLevel(tp, InpSTH_Lookback);
+         if(altTp > 0)
          {
-            PrintFormat("[Straight_Buy] TP %.5f too close to Asian High %.5f (within %d pips). Moving TP to next ST Low above Asian: %.5f",
+            PrintFormat("[Straight_Buy] TP %.5f too close to Asian High %.5f (within %d pips). Moving TP to next level above current TP: %.5f",
                         tp, g_AsianHigh, InpTPAsianProximityPips, altTp);
             tp = altTp;
          }
