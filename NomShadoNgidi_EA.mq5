@@ -66,7 +66,7 @@ input int    InpSTH_Lookback   = 20;   // Short-term High/Low lookback (H1 bars)
 input int    InpMagicNumber    = 20250101; // EA Magic Number
 
 input group "=== Alerts ==="
-input bool   InpPopupAlerts    = true;                           // Enable popup alerts on new setup
+input bool   InpPopupAlerts    = false;                          // Enable popup alerts on new setup
 input bool   InpPushAlerts     = false;                          // Enable push notifications
 input bool   InpEmailAlerts    = true;                           // Enable email alerts for balance milestones
 input string InpAlertEmail     = "solutionsphanaso@gmail.com";   // ⚠ Configure in MT5 Tools→Options→Email→To
