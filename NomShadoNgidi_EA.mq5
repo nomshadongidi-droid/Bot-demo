@@ -755,10 +755,12 @@ bool PlaceBuy(double entry, double sl, double tp, string label)
    bool   ok  = false;
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
 
-   if(entry <= ask + PipsToPrice(2.0))
-      ok = trade.Buy(lots, _Symbol, 0, sl, tp, label);
+   if(MathAbs(entry - ask) <= PipsToPrice(2.0))
+      ok = trade.Buy(lots, _Symbol, 0, sl, tp, label);         // at market
+   else if(entry < ask)
+      ok = trade.BuyLimit(lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);  // limit below market
    else
-      ok = trade.BuyLimit(lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);
+      ok = trade.BuyStop(lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);   // stop above market
 
    if(ok)
    {
