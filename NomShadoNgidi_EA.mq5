@@ -66,7 +66,7 @@ input int    InpSTH_Lookback   = 20;   // Short-term High/Low lookback (H1 bars)
 input int    InpMagicNumber    = 20250101; // EA Magic Number
 
 input group "=== Alerts ==="
-input bool   InpPopupAlerts    = false;                          // Enable popup alerts on new setup
+input bool   InpPopupAlerts    = true;                           // Enable popup alerts on new setup
 input bool   InpPushAlerts     = false;                          // Enable push notifications
 input bool   InpEmailAlerts    = true;                           // Enable email alerts for balance milestones
 input string InpAlertEmail     = "solutionsphanaso@gmail.com";   // ⚠ Configure in MT5 Tools→Options→Email→To
@@ -545,8 +545,9 @@ void AnalyseAsianSession()
 //    bar[2] = previous closed        (candle 1 — starts FVG)
 //    bar[3] = candle before the pair (SL reference)
 //
-//  Bullish FVG: candle1.high <= candle2.low  (gap up)
-//  Bearish FVG: candle1.low  >= candle2.high (gap down)
+//  FVG is defined by a GAP BETWEEN CANDLE BODIES (not wicks):
+//  Bullish FVG: candle1 body top  <= candle2 body bottom  (body gap up)
+//  Bearish FVG: candle1 body bottom >= candle2 body top   (body gap down)
 //  Returns: 1=bullish, -1=bearish, 0=none
 //============================================================
 
@@ -554,13 +555,14 @@ int DetectFVG(int startBar)
 {
    if(startBar < 1 || startBar + 1 >= iBars(_Symbol, PERIOD_H1)) return 0;
 
-   double c1High = iHigh(_Symbol, PERIOD_H1, startBar + 1);
-   double c1Low  = iLow (_Symbol, PERIOD_H1, startBar + 1);
-   double c2Low  = iLow (_Symbol, PERIOD_H1, startBar);
-   double c2High = iHigh(_Symbol, PERIOD_H1, startBar);
+   // Body top/bottom for each candle
+   double c1BodyTop    = MathMax(iOpen(_Symbol, PERIOD_H1, startBar + 1), iClose(_Symbol, PERIOD_H1, startBar + 1));
+   double c1BodyBottom = MathMin(iOpen(_Symbol, PERIOD_H1, startBar + 1), iClose(_Symbol, PERIOD_H1, startBar + 1));
+   double c2BodyTop    = MathMax(iOpen(_Symbol, PERIOD_H1, startBar),     iClose(_Symbol, PERIOD_H1, startBar));
+   double c2BodyBottom = MathMin(iOpen(_Symbol, PERIOD_H1, startBar),     iClose(_Symbol, PERIOD_H1, startBar));
 
-   if(c1High <= c2Low)  return  1;
-   if(c1Low  >= c2High) return -1;
+   if(c1BodyTop    <= c2BodyBottom) return  1;   // bullish body gap
+   if(c1BodyBottom >= c2BodyTop)    return -1;   // bearish body gap
    return 0;
 }
 
@@ -569,15 +571,20 @@ bool GetFVGZone(int startBar, double &zoneHigh, double &zoneLow)
    int type = DetectFVG(startBar);
    if(type == 0) return false;
 
+   double c1BodyTop    = MathMax(iOpen(_Symbol, PERIOD_H1, startBar + 1), iClose(_Symbol, PERIOD_H1, startBar + 1));
+   double c1BodyBottom = MathMin(iOpen(_Symbol, PERIOD_H1, startBar + 1), iClose(_Symbol, PERIOD_H1, startBar + 1));
+   double c2BodyTop    = MathMax(iOpen(_Symbol, PERIOD_H1, startBar),     iClose(_Symbol, PERIOD_H1, startBar));
+   double c2BodyBottom = MathMin(iOpen(_Symbol, PERIOD_H1, startBar),     iClose(_Symbol, PERIOD_H1, startBar));
+
    if(type == 1)
    {
-      zoneLow  = iHigh(_Symbol, PERIOD_H1, startBar + 1);
-      zoneHigh = iLow (_Symbol, PERIOD_H1, startBar);
+      zoneLow  = c1BodyTop;       // top of candle 1 body
+      zoneHigh = c2BodyBottom;    // bottom of candle 2 body
    }
    else
    {
-      zoneHigh = iLow (_Symbol, PERIOD_H1, startBar + 1);
-      zoneLow  = iHigh(_Symbol, PERIOD_H1, startBar);
+      zoneHigh = c1BodyBottom;    // bottom of candle 1 body
+      zoneLow  = c2BodyTop;       // top of candle 2 body
    }
    return (zoneHigh > zoneLow);
 }
