@@ -868,7 +868,7 @@ bool TryFVGAsianBuy()
 // FVG Buy
 // Trigger : downside violation of Asian range + bullish FVG | 02:00–10:00 NY
 // Entry   : market if RRR >= min; otherwise buy limit at min-RRR price inside FVG
-// SL      : below bar[3] (candle before FVG pair)
+// SL      : below bar[2] low (the candle that swept down — always below the FVG gap)
 // TP      : ST high above Asian High; fallback 1:3 RR
 bool TryFVGBuy()
 {
@@ -880,7 +880,11 @@ bool TryFVGBuy()
    if(!GetFVGZone(1, zHigh, zLow)) return false;
 
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   double sl  = iLow(_Symbol, PERIOD_H1, 3) - PipsToPrice(InpFVGBuffer);
+   // SL below bar[2]'s low — the candle that made the downside violation.
+   // bar[2].low is always below the FVG gap and thus always below current ask.
+   // Using bar[3] was wrong: in a downtrend bar[3] sits at higher prices than
+   // bar[2], causing sl > ask and silently killing the trade.
+   double sl  = iLow(_Symbol, PERIOD_H1, 2) - PipsToPrice(InpFVGBuffer);
    double tp  = GetSTHigh(InpSTH_Lookback);
    if(sl >= ask) return false;
 
@@ -1070,7 +1074,7 @@ bool TryFVGAsianSell()
 // FVG Sell
 // Trigger : upside violation of Asian range + bearish FVG | 02:00–10:00 NY
 // Entry   : market if RRR >= min; otherwise sell limit at min-RRR price
-// SL      : above bar[3]
+// SL      : above bar[2] high (the candle that spiked up — always above the FVG gap)
 // TP      : ST low below Asian Low; if all Asian bullish → Asian Low
 bool TryFVGSell()
 {
@@ -1083,7 +1087,11 @@ bool TryFVGSell()
    if(!GetFVGZone(1, zHigh, zLow)) return false;
 
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   double sl  = iHigh(_Symbol, PERIOD_H1, 3) + PipsToPrice(InpFVGBuffer);
+   // SL above bar[2]'s high — the candle that made the upside violation.
+   // bar[2].high is always above the FVG gap and thus always above current bid.
+   // Using bar[3] was wrong: bar[3] sits at lower prices than bar[2] in an uptrend,
+   // meaning the SL could be placed below the actual spike high (too tight).
+   double sl  = iHigh(_Symbol, PERIOD_H1, 2) + PipsToPrice(InpFVGBuffer);
 
    double tp;
    if(g_AllAsianBullish && g_AsianLow > 0 && g_AsianLow < bid)
