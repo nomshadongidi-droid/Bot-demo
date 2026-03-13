@@ -1043,21 +1043,18 @@ bool TryFVGBuy()
 }
 
 // Straight Buy
-// Trigger: after 5AM | bearish candles from London open (2AM) through NY KZ open (5AM) | bullish close
+// Trigger: 5AM candle (bar[1]) closes bullish | bearish candles 2AM–5AM | fires on 6AM bar open
 // Entry  : market buy on bullish H1 close
 // SL     : below current bullish candle or previous candle (whichever is lower)
-// TP     : 1hr short-term high.
-//          If all Asian candles were bearish, TP = Asian session start level (g_AsianHigh).
-//          If TP (ST high) is within InpTPAsianProximityPips of Asian High, TP is moved to
-//          the next short-term low above the Asian session (gives trade room past the Asian range).
+// TP     : 1hr short-term high above Asian session high.
+//          If all Asian candles were bearish, TP = Asian session high.
 bool TryStraightBuy()
 {
    if(g_FVGBuyDone) return false; // FVG Buy already fired today
 
-   // bar[1] must be the 5AM candle — only fire on the 6AM bar close
-   MqlDateTime bar1Dt;
-   TimeToStruct(BarTimeNY(1), bar1Dt);
-   if(bar1Dt.hour != InpNYKillZoneNY) return false;
+   // Current Eastern hour must be InpNYKillZoneNY+1 (6AM) — means 5AM candle just closed as bar[1].
+   // Using CurrentHour() (derived from TimeGMT()) is more reliable than BarTimeNY across brokers.
+   if(CurrentHour() != InpNYKillZoneNY + 1) return false;
 
    if(!BearishCandlesTillHour(InpNYKillZoneNY)) return false; // bearish from 2AM to 5AM
    if(!IsBullishCandle(1))                       return false;
@@ -1293,10 +1290,9 @@ bool TryStraightSell()
 {
    if(g_FVGSellDone) return false; // FVG Sell already fired today
 
-   // bar[1] must be the 5AM candle — only fire on the 6AM bar close
-   MqlDateTime bar1Dt;
-   TimeToStruct(BarTimeNY(1), bar1Dt);
-   if(bar1Dt.hour != InpNYKillZoneNY) return false;
+   // Current Eastern hour must be InpNYKillZoneNY+1 (6AM) — means 5AM candle just closed as bar[1].
+   // Using CurrentHour() (derived from TimeGMT()) is more reliable than BarTimeNY across brokers.
+   if(CurrentHour() != InpNYKillZoneNY + 1) return false;
 
    if(!BullishCandlesTillHour(InpNYKillZoneNY)) return false; // bullish from 2AM to 5AM (1 bearish exception allowed)
 
