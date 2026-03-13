@@ -874,21 +874,20 @@ bool TryFVGAsianBuy()
 // TP      : ST high above Asian High; fallback 1:3 RR
 bool TryFVGBuy()
 {
-   if(g_StraightBuyDone)       return false;
-   if(!HasDownsideViolation()) return false;
-   if(DetectFVG(1) != 1)       return false;
+   if(g_StraightBuyDone)       { Print("[FVG_Buy] SKIP: straight buy already done today"); return false; }
+   if(!HasDownsideViolation())  { PrintFormat("[FVG_Buy] SKIP: no downside violation (bar2.low=%.5f bar3.low=%.5f)", iLow(_Symbol,PERIOD_H1,2), iLow(_Symbol,PERIOD_H1,3)); return false; }
+   if(DetectFVG(1) != 1)        { PrintFormat("[FVG_Buy] SKIP: no bullish FVG (bar2.high=%.5f bar1.low=%.5f)", iHigh(_Symbol,PERIOD_H1,2), iLow(_Symbol,PERIOD_H1,1)); return false; }
 
    double zHigh, zLow;
-   if(!GetFVGZone(1, zHigh, zLow)) return false;
+   if(!GetFVGZone(1, zHigh, zLow)) { Print("[FVG_Buy] SKIP: FVG zone invalid"); return false; }
 
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   // SL below bar[2]'s low — the candle that made the downside violation.
-   // bar[2].low is always below the FVG gap and thus always below current ask.
-   // Using bar[3] was wrong: in a downtrend bar[3] sits at higher prices than
-   // bar[2], causing sl > ask and silently killing the trade.
    double sl  = iLow(_Symbol, PERIOD_H1, 2) - PipsToPrice(InpFVGBuffer);
    double tp  = GetSTHigh(InpSTH_Lookback);
-   if(sl >= ask) return false;
+
+   PrintFormat("[FVG_Buy] Conditions met | ask=%.5f sl=%.5f tp=%.5f AsianHigh=%.5f", ask, sl, tp, g_AsianHigh);
+
+   if(sl >= ask) { PrintFormat("[FVG_Buy] SKIP: sl(%.5f) >= ask(%.5f)", sl, ask); return false; }
 
    if(tp <= g_AsianHigh)
    {
@@ -896,22 +895,26 @@ bool TryFVGBuy()
       PrintFormat("[FVG_Buy] No ST high above Asian High — using 1:3 RR TP: %.5f", tp);
    }
 
-   if(tp <= ask) return false;
+   if(tp <= ask) { PrintFormat("[FVG_Buy] SKIP: tp(%.5f) <= ask(%.5f)", tp, ask); return false; }
 
    double entry;
    double marketRRR = (ask - sl > 0) ? (tp - ask) / (ask - sl) : 0;
 
+   PrintFormat("[FVG_Buy] Market RRR=%.2f MinRRR=%.1f", marketRRR, InpMinRRR);
+
    if(marketRRR >= InpMinRRR)
    {
       entry = ask;
+      PrintFormat("[FVG_Buy] RRR ok — market buy at %.5f", entry);
    }
    else
    {
       entry = (tp + InpMinRRR * sl) / (1.0 + InpMinRRR);
-      if(entry >= ask || entry <= sl) return false;
+      PrintFormat("[FVG_Buy] RRR low — BuyLimit calculated at %.5f", entry);
+      if(entry >= ask || entry <= sl) { PrintFormat("[FVG_Buy] SKIP: entry(%.5f) out of range ask=%.5f sl=%.5f", entry, ask, sl); return false; }
       double limitRRR = (entry - sl > 0) ? (tp - entry) / (entry - sl) : 0;
-      if(limitRRR < InpMinRRR) return false;
-      PrintFormat("[FVG_Buy] Market RRR %.2f < %.1f — BuyLimit at %.5f", marketRRR, InpMinRRR, entry);
+      if(limitRRR < InpMinRRR) { PrintFormat("[FVG_Buy] SKIP: limitRRR %.2f < %.1f", limitRRR, InpMinRRR); return false; }
+      PrintFormat("[FVG_Buy] BuyLimit at %.5f | limitRRR=%.2f", entry, limitRRR);
    }
 
    bool ok = PlaceBuy(entry, sl, tp, "FVG_Buy");
