@@ -951,6 +951,12 @@ bool TryStraightBuy()
    // Uses CurrentHour() which is pure UTC-derived Eastern time, never broker clock.
    if(CurrentHour() != InpNYKillZoneNY + 1) return false;
 
+   // Belt-and-suspenders: directly verify bar[1] opened at 5AM Eastern.
+   // This rules out any edge case (data gap, DST boundary, server clock drift)
+   // where CurrentHour() passes but bar[1] is NOT actually the 5AM candle.
+   // Fires ONLY after the 5AM candle has closed — never at or during the 5AM bar.
+   { MqlDateTime _b1; TimeToStruct(BarTimeNY(1), _b1); if(_b1.hour != InpNYKillZoneNY) return false; }
+
    // Bars from London open (2AM) to NY KZ open (5AM) must be mostly bearish.
    // Uses fixed bar indices — no timezone conversion needed.
    if(!BearishFromLondonToNYKZ()) return false;
@@ -1153,6 +1159,12 @@ bool TryStraightSell()
 
    // Must be exactly 6AM Eastern — the first bar after the 5AM candle closes.
    if(CurrentHour() != InpNYKillZoneNY + 1) return false;
+
+   // Belt-and-suspenders: directly verify bar[1] opened at 5AM Eastern.
+   // This rules out any edge case (data gap, DST boundary, server clock drift)
+   // where CurrentHour() passes but bar[1] is NOT actually the 5AM candle.
+   // Fires ONLY after the 5AM candle has closed — never at or during the 5AM bar.
+   { MqlDateTime _b1; TimeToStruct(BarTimeNY(1), _b1); if(_b1.hour != InpNYKillZoneNY) return false; }
 
    // Bars from London open (2AM) to NY KZ open (5AM) must be mostly bullish.
    if(!BullishFromLondonToNYKZ()) return false;
