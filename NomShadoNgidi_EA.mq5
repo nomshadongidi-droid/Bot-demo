@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //|                       NomShadoNgidi_EA.mq5                       |
 //|            Expert Advisor — Nomshado Ngidi Trading Plan Q1 2025  |
-//|           Instrument: US_30 (US.30) ONLY  |  Version 1.02        |
+//|           Instrument: US_30 (US.30) ONLY  |  Version 1.03        |
 //+------------------------------------------------------------------+
 //
 //  ⚠ THIS EA WILL ONLY RUN ON US_30 (also accepted: US.30, US30)
@@ -11,13 +11,9 @@
 //  BUY  → FVG Asian Buy | FVG Buy | Straight Buy
 //  SELL → FVG Asian Sell | FVG Sell | Straight Sell
 //
-//  MANUAL TASKS (cannot be automated — trader must do these):
-//  • Check DXY for directional confluence each session
-//  • Identify key Daily/Weekly/Monthly levels before the week starts
-//  • Mark equal highs/lows on the weekly chart
-//  • Determine weekly phase: Trend / Reversal / Correction
-//  • Review upcoming news (CPI, PPI, NFP) on an economic calendar
-//  • Maintain daily bias; do not flip bias until price reaches key levels
+//  AUTOMATED FEATURES (v1.03):
+//  • Auto-Bias   — D1 trend direction derived from last 5 candles (no manual input)
+//  • News Filter — blocks all new trades on CPI, PPI and NFP windows (configurable buffer)
 //
 //  HOW TO INSTALL:
 //  1. Copy this file to: MT5 → File → Open Data Folder → MQL5 → Experts
@@ -28,7 +24,7 @@
 //
 //+------------------------------------------------------------------+
 #property copyright   "Nomshado Ngidi"
-#property version     "1.02"
+#property version     "1.03"
 #property description "MT5 EA — Nomshado Ngidi Trading Plan Q1 2025"
 #property description "⚠ Instrument: US_30 (US.30) ONLY — will refuse all other symbols"
 #property description "Setups: FVG Buy/Sell, Asian FVG, Straight"
@@ -64,6 +60,11 @@ input int    InpMaxDailyTrades = 2;    // Max trades per day (plan: max 2)
 input bool   InpAllowMonday    = false;// Allow Monday trading (plan: NO)
 input int    InpSTH_Lookback   = 20;   // Short-term High/Low lookback (H1 bars)
 input int    InpMagicNumber    = 20250101; // EA Magic Number
+
+input group "=== News Filter (CPI / PPI / NFP) ==="
+input bool   InpNewsFilter        = true;   // Block trading on CPI / PPI / NFP days
+input int    InpNewsMinsBefore    = 60;     // Minutes to stop trading BEFORE news
+input int    InpNewsMinsAfter     = 30;     // Minutes to resume trading AFTER news
 
 input group "=== Alerts ==="
 input bool   InpPopupAlerts    = true;                           // Enable popup alerts on new setup
@@ -135,7 +136,7 @@ int OnInit()
    trade.SetDeviationInPoints(20);
    trade.SetTypeFilling(ORDER_FILLING_FOK);
 
-   PrintFormat("=== Nomshado Ngidi EA v1.02 Initialised ===");
+   PrintFormat("=== Nomshado Ngidi EA v1.03 Initialised ===");
    PrintFormat("Symbol: %s | Pip Size: %.5f", _Symbol, g_PipSize);
    PrintFormat("Risk per trade: Account Balance / 6 | Min RRR 1:%.1f", InpMinRRR);
    PrintFormat("Asian NY: %02d:00-%02d:00 | London KZ: %02d:00 | NY KZ: %02d:00-%02d:00",
@@ -144,7 +145,9 @@ int OnInit()
                EasternOffset() == -4 ? "EDT" : "EST", EasternOffset(), InpMaxDailyTrades);
    if(!InpAllowMonday)
       Print("Monday filter: ACTIVE");
-   Print("REMINDER: Check DXY, key Daily/Weekly levels, and news before each session.");
+   if(InpNewsFilter)
+      PrintFormat("News filter: ACTIVE — CPI/PPI/NFP blocked (%dm before / %dm after)",
+                  InpNewsMinsBefore, InpNewsMinsAfter);
 
    g_LastBar = iTime(_Symbol, PERIOD_H1, 0);
    return INIT_SUCCEEDED;
@@ -304,6 +307,7 @@ void OnTick()
    if(!InpAllowMonday && IsMonday())     return;
    if(g_DailyCount >= InpMaxDailyTrades) return;
    if(!IsInTradingWindow())              return;
+   if(IsHighImpactNewsWindow())          return;
 
    AnalyseAsianSession();
 
@@ -666,34 +670,66 @@ double AvgBodySize(int fromBar = 2, int count = 20)
    return total / count;
 }
 
-bool IsDailyBuyReversalPattern()
+// Auto-Bias: derives trend direction from the last 5 closed D1 candles.
+// Majority (3+) bullish  → returns  1 (buy bias).
+// Majority (3+) bearish  → returns -1 (sell bias).
+// Split or doji majority → returns  0 (neutral — setups are skipped).
+int AutoBias()
 {
    int d1Bars = iBars(_Symbol, PERIOD_D1);
-   if(d1Bars < 22) return false;
+   if(d1Bars < 6) return 0;
 
-   double avgBody = 0;
-   for(int i = 2; i < 22; i++)
-      avgBody += MathAbs(iClose(_Symbol, PERIOD_D1, i) - iOpen(_Symbol, PERIOD_D1, i));
-   avgBody /= 20.0;
+   int bullCount = 0, bearCount = 0;
+   for(int i = 1; i <= 5; i++)
+   {
+      double c = iClose(_Symbol, PERIOD_D1, i);
+      double o = iOpen (_Symbol, PERIOD_D1, i);
+      if(c > o) bullCount++;
+      else if(c < o) bearCount++;
+   }
 
-   double d1Body   = iOpen(_Symbol, PERIOD_D1, 1) - iClose(_Symbol, PERIOD_D1, 1);
-   bool   d1Bearish = iClose(_Symbol, PERIOD_D1, 1) < iOpen(_Symbol, PERIOD_D1, 1);
-   return d1Bearish && d1Body > avgBody * 2.0;
+   if(bullCount >= 3) return  1;
+   if(bearCount >= 3) return -1;
+   return 0;
 }
 
-bool IsDailySellReversalPattern()
+// Returns true when the current time falls inside the configurable news buffer
+// window for a high-impact USD event whose name contains "CPI", "PPI", or "Nonfarm".
+// Uses the built-in MT5 Economic Calendar API — no external data feed needed.
+bool IsHighImpactNewsWindow()
 {
-   int d1Bars = iBars(_Symbol, PERIOD_D1);
-   if(d1Bars < 22) return false;
+   if(!InpNewsFilter) return false;
 
-   double avgBody = 0;
-   for(int i = 2; i < 22; i++)
-      avgBody += MathAbs(iClose(_Symbol, PERIOD_D1, i) - iOpen(_Symbol, PERIOD_D1, i));
-   avgBody /= 20.0;
+   datetime now      = TimeCurrent();
+   datetime dayStart = now - (now % 86400);
+   datetime dayEnd   = dayStart + 86400;
 
-   double d1Body    = iClose(_Symbol, PERIOD_D1, 1) - iOpen(_Symbol, PERIOD_D1, 1);
-   bool   d1Bullish = iClose(_Symbol, PERIOD_D1, 1) > iOpen(_Symbol, PERIOD_D1, 1);
-   return d1Bullish && d1Body > avgBody * 2.0;
+   MqlCalendarValue values[];
+   int count = CalendarValueHistory(values, dayStart, dayEnd, "USD");
+   if(count <= 0) return false;
+
+   for(int i = 0; i < count; i++)
+   {
+      MqlCalendarEvent ev;
+      if(!CalendarEventById(values[i].event_id, ev)) continue;
+      if(ev.importance != CALENDAR_IMPORTANCE_HIGH)  continue;
+
+      string name = ev.name;
+      if(StringFind(name, "CPI")     < 0 &&
+         StringFind(name, "PPI")     < 0 &&
+         StringFind(name, "Nonfarm") < 0) continue;
+
+      datetime evTime = values[i].time;
+      if(now >= evTime - (datetime)(InpNewsMinsBefore * 60) &&
+         now <= evTime + (datetime)(InpNewsMinsAfter  * 60))
+      {
+         PrintFormat("[NEWS FILTER] Blocked — %s at %s (buffer -%dm / +%dm)",
+                     name, TimeToString(evTime, TIME_DATE | TIME_MINUTES),
+                     InpNewsMinsBefore, InpNewsMinsAfter);
+         return true;
+      }
+   }
+   return false;
 }
 
 //============================================================
@@ -855,7 +891,7 @@ bool ScanBuySetups()
 bool TryFVGAsianBuy()
 {
    if(g_AsianLastBar < 0) return false;
-   if(!IsDailyBuyReversalPattern()) return false;
+   if(AutoBias() != 1) return false;   // require bullish D1 bias
 
    double zHigh, zLow;
    if(!GetFVGZone(g_AsianLastBar, zHigh, zLow)) return false;
@@ -881,6 +917,7 @@ bool TryFVGAsianBuy()
 // TP      : ST high above Asian High; fallback 1:3 RR
 bool TryFVGBuy()
 {
+   if(AutoBias() != 1)          { Print("[FVG_Buy] SKIP: no bullish D1 bias"); return false; }
    if(g_StraightBuyDone)       { Print("[FVG_Buy] SKIP: straight buy already done today"); return false; }
    if(!HasDownsideViolation())  { PrintFormat("[FVG_Buy] SKIP: no downside violation (bar2.low=%.5f bar3.low=%.5f)", iLow(_Symbol,PERIOD_H1,2), iLow(_Symbol,PERIOD_H1,3)); return false; }
    if(DetectFVG(1) != 1)        { PrintFormat("[FVG_Buy] SKIP: no bullish FVG (bar2.high=%.5f bar1.low=%.5f)", iHigh(_Symbol,PERIOD_H1,2), iLow(_Symbol,PERIOD_H1,1)); return false; }
@@ -945,7 +982,8 @@ bool TryFVGBuy()
 // TP      : ST high above Asian High; if all Asian candles bearish → Asian High
 bool TryStraightBuy()
 {
-   if(g_FVGBuyDone) return false;
+   if(g_FVGBuyDone)   return false;
+   if(AutoBias() != 1) return false;   // require bullish D1 bias
 
    // Must be exactly 6AM Eastern — the first bar after the 5AM candle closes.
    // Uses CurrentHour() which is pure UTC-derived Eastern time, never broker clock.
@@ -1069,7 +1107,7 @@ bool ScanSellSetups()
 bool TryFVGAsianSell()
 {
    if(g_AsianLastBar < 0) return false;
-   if(!IsDailySellReversalPattern()) return false;
+   if(AutoBias() != -1) return false;  // require bearish D1 bias
 
    double zHigh, zLow;
    if(!GetFVGZone(g_AsianLastBar, zHigh, zLow)) return false;
@@ -1096,6 +1134,7 @@ bool TryFVGAsianSell()
 // TP      : ST low below Asian Low; if all Asian bullish → Asian Low
 bool TryFVGSell()
 {
+   if(AutoBias() != -1)       return false;   // require bearish D1 bias
    if(g_FVGSellDone)         return false;
    if(g_StraightSellDone)    return false;
    if(!HasUpsideViolation()) return false;
@@ -1155,7 +1194,8 @@ bool TryFVGSell()
 // TP      : ST low below Asian Low; if all Asian candles bearish → Asian Low
 bool TryStraightSell()
 {
-   if(g_FVGSellDone) return false;
+   if(g_FVGSellDone)    return false;
+   if(AutoBias() != -1)  return false;   // require bearish D1 bias
 
    // Must be exactly 6AM Eastern — the first bar after the 5AM candle closes.
    if(CurrentHour() != InpNYKillZoneNY + 1) return false;
@@ -1201,14 +1241,14 @@ bool TryStraightSell()
 //
 //  NOTES ON RE-ENTRIES (manual):
 //  1. FVG Asia Sell SL hit → automated re-entry buy fires next bar
-//  2. Straight buy/sell weak candle → switch direction manually
 //
-//  DXY CONFLUENCE (manual):
-//  Check DXY before each session. Bullish DXY → favour sell setups.
-//  Bearish DXY → favour buy setups.
+//  AUTO-BIAS (v1.03):
+//  Counts last 5 closed D1 candles. 3+ bullish = buy bias only.
+//  3+ bearish = sell bias only. Split = neutral, no setups fired.
 //
-//  KEY LEVELS (manual):
-//  Mark Daily, 4H, Weekly, Monthly levels. EA uses short-term
-//  highs/lows for TP — your marked levels take priority.
+//  NEWS FILTER (v1.03):
+//  Uses MT5 Economic Calendar to detect USD CPI, PPI, NFP events.
+//  All new trades are blocked InpNewsMinsBefore minutes before and
+//  InpNewsMinsAfter minutes after each high-impact event.
 //
 //+------------------------------------------------------------------+
