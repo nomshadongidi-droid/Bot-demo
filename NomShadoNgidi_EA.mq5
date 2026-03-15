@@ -72,7 +72,7 @@ input bool   InpPushAlerts     = false;                          // Enable push 
 input bool   InpEmailAlerts    = true;                           // Enable email alerts for balance milestones
 input string InpAlertEmail     = "solutionsphanaso@gmail.com";   // ⚠ Configure in MT5 Tools→Options→Email→To
 input double InpBalanceLowAlert = 100.0;                         // Email alert: balance drops to or below ($)
-// Milestone alerts fire once each when balance first crosses: $10,000 | $100,000 | $500,000 | $1,000,000
+// Milestone alerts fire once each when balance first crosses: $1,000 | $5,000 | $10,000 | $50,000 | $100,000 | $500,000 | $1,000,000
 
 //============================================================
 //  GLOBAL VARIABLES
@@ -97,7 +97,10 @@ datetime g_AsianDate        = 0;
 
 // Balance alert flags (lifetime — not reset daily)
 bool     g_BalanceLowAlertSent = false;
+bool     g_Milestone1k         = false;
+bool     g_Milestone5k         = false;
 bool     g_Milestone10k        = false;
+bool     g_Milestone50k        = false;
 bool     g_Milestone100k       = false;
 bool     g_Milestone500k       = false;
 bool     g_Milestone1m         = false;
@@ -283,7 +286,10 @@ void CheckBalanceAlerts()
    else if(g_BalanceLowAlertSent && balance > InpBalanceLowAlert)
       g_BalanceLowAlertSent = false;
 
+   if(balance >= 1000.0)    FireMilestone(g_Milestone1k,   "$1,000",     balance, acct, ts);
+   if(balance >= 5000.0)    FireMilestone(g_Milestone5k,   "$5,000",     balance, acct, ts);
    if(balance >= 10000.0)   FireMilestone(g_Milestone10k,  "$10,000",    balance, acct, ts);
+   if(balance >= 50000.0)   FireMilestone(g_Milestone50k,  "$50,000",    balance, acct, ts);
    if(balance >= 100000.0)  FireMilestone(g_Milestone100k, "$100,000",   balance, acct, ts);
    if(balance >= 500000.0)  FireMilestone(g_Milestone500k, "$500,000",   balance, acct, ts);
    if(balance >= 1000000.0) FireMilestone(g_Milestone1m,   "$1,000,000", balance, acct, ts);
