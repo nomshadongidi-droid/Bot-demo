@@ -13,7 +13,7 @@
 //
 //  AUTOMATED FEATURES (v1.03):
 //  • Auto-Bias   — D1 trend direction derived from last 5 candles (no manual input)
-//  • News Filter — blocks all new trades on any high-impact USD event (configurable buffer)
+//  • News Filter — blocks all new trades on CPI, PPI and NFP windows (configurable buffer)
 //
 //  HOW TO INSTALL:
 //  1. Copy this file to: MT5 → File → Open Data Folder → MQL5 → Experts
@@ -61,8 +61,8 @@ input bool   InpAllowMonday    = false;// Allow Monday trading (plan: NO)
 input int    InpSTH_Lookback   = 20;   // Short-term High/Low lookback (H1 bars)
 input int    InpMagicNumber    = 20250101; // EA Magic Number
 
-input group "=== News Filter (All High-Impact USD Events) ==="
-input bool   InpNewsFilter        = true;   // Block trading on all high-impact USD news days
+input group "=== News Filter (CPI / PPI / NFP) ==="
+input bool   InpNewsFilter        = true;   // Block trading on CPI / PPI / NFP days
 input int    InpNewsMinsBefore    = 60;     // Minutes to stop trading BEFORE news
 input int    InpNewsMinsAfter     = 30;     // Minutes to resume trading AFTER news
 
@@ -149,7 +149,7 @@ int OnInit()
    if(!InpAllowMonday)
       Print("Monday filter: ACTIVE");
    if(InpNewsFilter)
-      PrintFormat("News filter: ACTIVE — all high-impact USD events blocked (%dm before / %dm after)",
+      PrintFormat("News filter: ACTIVE — CPI/PPI/NFP blocked (%dm before / %dm after)",
                   InpNewsMinsBefore, InpNewsMinsAfter);
 
    g_LastBar = iTime(_Symbol, PERIOD_H1, 0);
@@ -698,7 +698,7 @@ int AutoBias()
 }
 
 // Returns true when the current time falls inside the configurable news buffer
-// window for any high-impact USD event.
+// window for a high-impact USD event whose name contains "CPI", "PPI", or "Nonfarm".
 // Uses the built-in MT5 Economic Calendar API — no external data feed needed.
 bool IsHighImpactNewsWindow()
 {
@@ -718,12 +718,17 @@ bool IsHighImpactNewsWindow()
       if(!CalendarEventById(values[i].event_id, ev)) continue;
       if(ev.importance != CALENDAR_IMPORTANCE_HIGH)  continue;
 
+      string name = ev.name;
+      if(StringFind(name, "CPI")     < 0 &&
+         StringFind(name, "PPI")     < 0 &&
+         StringFind(name, "Nonfarm") < 0) continue;
+
       datetime evTime = values[i].time;
       if(now >= evTime - (datetime)(InpNewsMinsBefore * 60) &&
          now <= evTime + (datetime)(InpNewsMinsAfter  * 60))
       {
          PrintFormat("[NEWS FILTER] Blocked — %s at %s (buffer -%dm / +%dm)",
-                     ev.name, TimeToString(evTime, TIME_DATE | TIME_MINUTES),
+                     name, TimeToString(evTime, TIME_DATE | TIME_MINUTES),
                      InpNewsMinsBefore, InpNewsMinsAfter);
          return true;
       }
