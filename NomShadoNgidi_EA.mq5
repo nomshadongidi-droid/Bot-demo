@@ -976,7 +976,7 @@ bool ScanBuySetups()
 
 // FVG Asian Buy
 // Trigger : bullish FVG on last Asian candle | fires from 01:00 candle | Daily buy reversal required
-// Entry   : market buy
+// Entry   : market if RRR >= min; otherwise buy limit at min-RRR price
 // SL      : below Asian session low
 // TP      : ST high above Asian High; fallback 1:3 RR if no level above Asian High
 bool TryFVGAsianBuy()
@@ -988,17 +988,40 @@ bool TryFVGAsianBuy()
    double zHigh, zLow;
    if(!GetFVGZone(g_AsianLastBar, zHigh, zLow)) return false;
 
-   double entry = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   double sl    = g_AsianLow - PipsToPrice(InpFVGBuffer);
-   double tp    = GetSTHigh(InpSTH_Lookback);
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double sl  = g_AsianLow - PipsToPrice(InpFVGBuffer);
+   double tp  = GetSTHigh(InpSTH_Lookback);
+
+   if(sl >= ask) { PrintFormat("[FVG_Asian_Buy] SKIP: sl(%.5f) >= ask(%.5f)", sl, ask); return false; }
 
    if(tp <= g_AsianHigh)
    {
-      tp = entry + 3.0 * (entry - sl);
+      tp = ask + 3.0 * (ask - sl);
       PrintFormat("[FVG_Asian_Buy] No ST high above Asian High — using 1:3 RR TP: %.5f", tp);
    }
 
-   if(tp <= entry) return false;
+   if(tp <= ask) { PrintFormat("[FVG_Asian_Buy] SKIP: tp(%.5f) <= ask(%.5f)", tp, ask); return false; }
+
+   double entry;
+   double marketRRR = (ask - sl > 0) ? (tp - ask) / (ask - sl) : 0;
+
+   PrintFormat("[FVG_Asian_Buy] Market RRR=%.2f MinRRR=%.1f", marketRRR, InpMinRRR);
+
+   if(marketRRR >= InpMinRRR)
+   {
+      entry = ask;
+      PrintFormat("[FVG_Asian_Buy] RRR ok — market buy at %.5f", entry);
+   }
+   else
+   {
+      entry = (tp + InpMinRRR * sl) / (1.0 + InpMinRRR);
+      PrintFormat("[FVG_Asian_Buy] RRR low — BuyLimit calculated at %.5f", entry);
+      if(entry >= ask || entry <= sl) { PrintFormat("[FVG_Asian_Buy] SKIP: entry(%.5f) out of range ask=%.5f sl=%.5f", entry, ask, sl); return false; }
+      double limitRRR = (entry - sl > 0) ? (tp - entry) / (entry - sl) : 0;
+      if(limitRRR < InpMinRRR) { PrintFormat("[FVG_Asian_Buy] SKIP: limitRRR %.2f < %.1f", limitRRR, InpMinRRR); return false; }
+      PrintFormat("[FVG_Asian_Buy] BuyLimit at %.5f | limitRRR=%.2f", entry, limitRRR);
+   }
+
    return PlaceBuy(entry, sl, tp, "FVG_Asian_Buy");
 }
 
@@ -1192,7 +1215,7 @@ bool ScanSellSetups()
 
 // FVG Asian Sell
 // Context: bearish FVG on last Asian candle | fires from 01:00 candle | daily sell reversal required
-// Entry  : sell limit at midpoint of bearish FVG zone
+// Entry  : sell limit at FVG midpoint if RRR >= min; otherwise adjusted to min-RRR price
 // SL     : above bar before FVG pair
 // TP     : ST low below Asian Low
 bool TryFVGAsianSell()
@@ -1204,13 +1227,28 @@ bool TryFVGAsianSell()
    double zHigh, zLow;
    if(!GetFVGZone(g_AsianLastBar, zHigh, zLow)) return false;
 
-   double bid   = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   double entry = (zHigh + zLow) / 2.0;
-   if(entry <= bid) return false;
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double sl  = iHigh(_Symbol, PERIOD_H1, g_AsianLastBar + 2) + PipsToPrice(InpFVGBuffer);
+   double tp  = GetSTLow(InpSTH_Lookback);
+   if(tp <= 0) return false;
 
-   double sl = iHigh(_Symbol, PERIOD_H1, g_AsianLastBar + 2) + PipsToPrice(InpFVGBuffer);
-   double tp = GetSTLow(InpSTH_Lookback);
-   if(tp <= 0 || tp >= entry) return false;
+   // Start with FVG midpoint; fall back to min-RRR price if R:R is insufficient
+   double entry   = (zHigh + zLow) / 2.0;
+   double fvgRRR  = (sl - entry > 0 && entry > tp) ? (entry - tp) / (sl - entry) : 0;
+
+   PrintFormat("[FVG_Asian_Sell] FVG midpoint=%.5f RRR=%.2f MinRRR=%.1f", entry, fvgRRR, InpMinRRR);
+
+   if(fvgRRR < InpMinRRR)
+   {
+      entry = (tp + InpMinRRR * sl) / (1.0 + InpMinRRR);
+      PrintFormat("[FVG_Asian_Sell] RRR low — SellLimit adjusted to %.5f", entry);
+   }
+
+   if(entry <= bid) { PrintFormat("[FVG_Asian_Sell] SKIP: entry(%.5f) <= bid(%.5f)", entry, bid); return false; }
+   if(entry >= sl || tp >= entry) { PrintFormat("[FVG_Asian_Sell] SKIP: invalid geometry entry=%.5f sl=%.5f tp=%.5f", entry, sl, tp); return false; }
+
+   double limitRRR = (sl - entry > 0) ? (entry - tp) / (sl - entry) : 0;
+   if(limitRRR < InpMinRRR) { PrintFormat("[FVG_Asian_Sell] SKIP: limitRRR %.2f < %.1f", limitRRR, InpMinRRR); return false; }
 
    string dailyMsg = "⚠ FVG_Asian_Sell placed — check DAILY equal lows for primary TP target.";
    Print(dailyMsg);
