@@ -872,8 +872,8 @@ bool ScanBuySetups()
    int  hr        = CurrentHour();
    bool triggered = false;
 
-   // Priority 1: FVG Asian Buy | 01:00–10:00 NY
-   if(!triggered && g_AsianFVGBullish && hr >= InpFVGAsianWindowStartNY && hr <= InpTradingEndNY)
+   // Priority 1: FVG Asian Buy — fires from 01:00 candle, no upper window
+   if(!triggered && g_AsianFVGBullish)
       triggered = TryFVGAsianBuy();
 
    // Priority 2: FVG Buy | 02:00–10:00 NY
@@ -888,7 +888,7 @@ bool ScanBuySetups()
 }
 
 // FVG Asian Buy
-// Trigger : bullish FVG on last Asian candle | 01:00–10:00 NY | Daily buy reversal required
+// Trigger : bullish FVG on last Asian candle | fires from 01:00 candle | Daily buy reversal required
 // Entry   : market buy
 // SL      : below Asian session low
 // TP      : ST high above Asian High; fallback 1:3 RR if no level above Asian High
@@ -1087,8 +1087,8 @@ bool ScanSellSetups()
    int  hr        = CurrentHour();
    bool triggered = false;
 
-   // Priority 1: FVG Asian Sell | 01:00–10:00 NY
-   if(!triggered && g_AsianFVGBearish && hr >= InpFVGAsianWindowStartNY && hr <= InpTradingEndNY)
+   // Priority 1: FVG Asian Sell — fires from 01:00 candle, no upper window
+   if(!triggered && g_AsianFVGBearish)
       triggered = TryFVGAsianSell();
 
    // Priority 2: FVG Sell | 02:00–10:00 NY
@@ -1103,8 +1103,7 @@ bool ScanSellSetups()
 }
 
 // FVG Asian Sell
-// Context: bearish FVG on last Asian candle | daily sell reversal required
-// Window : 01:00–10:00 NY
+// Context: bearish FVG on last Asian candle | fires from 01:00 candle | daily sell reversal required
 // Entry  : sell limit at midpoint of bearish FVG zone
 // SL     : above bar before FVG pair
 // TP     : ST low below Asian Low
