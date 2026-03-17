@@ -389,7 +389,7 @@ bool IsMonday()
 bool IsInTradingWindow()
 {
    int h = CurrentHour();
-   return (h >= InpLondonStartNY && h <= InpTradingEndNY);
+   return (h >= InpFVGAsianWindowStartNY && h <= InpTradingEndNY);
 }
 
 datetime TodayMidnight()
