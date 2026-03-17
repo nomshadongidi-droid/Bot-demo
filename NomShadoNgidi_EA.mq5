@@ -1097,7 +1097,6 @@ bool TryFVGBuy()
 bool TryStraightBuy()
 {
    if(g_FVGBuyDone)   return false;
-   if(AutoBias() != 1) return false;   // require bullish D1 bias
 
    // Must be exactly 6AM Eastern — the first bar after the 5AM candle closes.
    // Uses CurrentHour() which is pure UTC-derived Eastern time, never broker clock.
@@ -1323,7 +1322,6 @@ bool TryFVGSell()
 bool TryStraightSell()
 {
    if(g_FVGSellDone)    return false;
-   if(AutoBias() != -1)  return false;   // require bearish D1 bias
 
    // Must be exactly 6AM Eastern — the first bar after the 5AM candle closes.
    if(CurrentHour() != InpNYKillZoneNY + 1) return false;
