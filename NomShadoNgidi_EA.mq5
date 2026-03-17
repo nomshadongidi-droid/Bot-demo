@@ -1032,7 +1032,6 @@ bool TryFVGAsianBuy()
 // TP      : ST high above Asian High; fallback 1:3 RR
 bool TryFVGBuy()
 {
-   if(AutoBias() != 1)          { Print("[FVG_Buy] SKIP: no bullish D1 bias"); return false; }
    if(g_StraightBuyDone)       { Print("[FVG_Buy] SKIP: straight buy already done today"); return false; }
    if(!HasDownsideViolation())  { PrintFormat("[FVG_Buy] SKIP: no downside violation (bar2.low=%.5f bar3.low=%.5f)", iLow(_Symbol,PERIOD_H1,2), iLow(_Symbol,PERIOD_H1,3)); return false; }
    if(DetectFVG(1) != 1)        { PrintFormat("[FVG_Buy] SKIP: no bullish FVG (bar2.high=%.5f bar1.low=%.5f)", iHigh(_Symbol,PERIOD_H1,2), iLow(_Symbol,PERIOD_H1,1)); return false; }
@@ -1264,7 +1263,6 @@ bool TryFVGAsianSell()
 // TP      : ST low below Asian Low; if all Asian bullish → Asian Low
 bool TryFVGSell()
 {
-   if(AutoBias() != -1)       return false;   // require bearish D1 bias
    if(g_FVGSellDone)         return false;
    if(g_StraightSellDone)    return false;
    if(!HasUpsideViolation()) return false;
