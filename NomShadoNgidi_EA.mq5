@@ -1324,25 +1324,20 @@ bool TryFVGAsianSell()
 }
 
 // FVG Sell
-// Trigger : upside violation of Asian range + bearish FVG | 02:00–10:00 NY
+// Trigger : bearish FVG on bar[1]/bar[2] | 02:00–10:00 NY
 // Entry   : market if RRR >= min; otherwise sell limit at min-RRR price
-// SL      : above bar[2] high (the candle that spiked up — always above the FVG gap)
+// SL      : above bar[2] high
 // TP      : ST low below Asian Low; if all Asian bullish → Asian Low
 bool TryFVGSell()
 {
    if(g_FVGSellDone)         return false;
    if(g_StraightSellDone)    return false;
-   if(!HasUpsideViolation()) return false;
    if(DetectFVG(1) != -1)    return false;
 
    double zHigh, zLow;
    if(!GetFVGZone(1, zHigh, zLow)) return false;
 
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   // SL above bar[2]'s high — the candle that made the upside violation.
-   // bar[2].high is always above the FVG gap and thus always above current bid.
-   // Using bar[3] was wrong: bar[3] sits at lower prices than bar[2] in an uptrend,
-   // meaning the SL could be placed below the actual spike high (too tight).
    double sl  = iHigh(_Symbol, PERIOD_H1, 2) + PipsToPrice(InpFVGBuffer);
 
    double tp;
