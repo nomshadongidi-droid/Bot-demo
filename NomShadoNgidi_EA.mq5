@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //|                       NomShadoNgidi_EA.mq5                       |
 //|            Expert Advisor — Nomshado Ngidi Trading Plan Q1 2025  |
-//|           Instrument: US_30 (US.30) ONLY  |  Version 1.04        |
+//|           Instrument: US_30 (US.30) ONLY  |  Version 1.05        |
 //+------------------------------------------------------------------+
 //
 //  ⚠ THIS EA WILL ONLY RUN ON US_30 (also accepted: US.30, US30)
@@ -11,7 +11,7 @@
 //  BUY  → FVG Asian Buy | FVG Buy | Straight Buy
 //  SELL → FVG Asian Sell | FVG Sell | Straight Sell
 //
-//  AUTOMATED FEATURES (v1.04):
+//  AUTOMATED FEATURES (v1.05):
 //  • Auto-Bias   — D1 trend direction derived from last 5 candles (no manual input)
 //  • News Filter — blocks all new trades on CPI, PPI and NFP windows (configurable buffer)
 //
@@ -24,7 +24,7 @@
 //
 //+------------------------------------------------------------------+
 #property copyright   "Nomshado Ngidi"
-#property version     "1.04"
+#property version     "1.05"
 #property description "MT5 EA — Nomshado Ngidi Trading Plan Q1 2025"
 #property description "⚠ Instrument: US_30 (US.30) ONLY — will refuse all other symbols"
 #property description "Setups: FVG Buy/Sell, Asian FVG, Straight"
@@ -152,7 +152,7 @@ int OnInit()
    trade.SetDeviationInPoints(20);
    trade.SetTypeFilling(ORDER_FILLING_FOK);
 
-   PrintFormat("=== Nomshado Ngidi EA v1.04 Initialised ===");
+   PrintFormat("=== Nomshado Ngidi EA v1.05 Initialised ===");
    PrintFormat("Symbol: %s | Pip Size: %.5f", _Symbol, g_PipSize);
    PrintFormat("Risk per trade: Account Balance / 6 | Min RRR 1:%.1f", InpMinRRR);
    PrintFormat("Asian NY: %02d:00-%02d:00 | London KZ: %02d:00 | NY KZ: %02d:00-%02d:00",
@@ -1093,12 +1093,24 @@ bool TryFVGAsianBuy()
    }
    else
    {
-      entry = (tp + InpMinRRR * sl) / (1.0 + InpMinRRR);
-      PrintFormat("[FVG_Asian_Buy] RRR low — BuyLimit calculated at %.5f", entry);
-      if(entry >= ask || entry <= sl) { PrintFormat("[FVG_Asian_Buy] SKIP: entry(%.5f) out of range ask=%.5f sl=%.5f", entry, ask, sl); return false; }
-      double limitRRR = (entry - sl > 0) ? (tp - entry) / (entry - sl) : 0;
-      if(limitRRR < InpMinRRR) { PrintFormat("[FVG_Asian_Buy] SKIP: limitRRR %.2f < %.1f", limitRRR, InpMinRRR); return false; }
-      PrintFormat("[FVG_Asian_Buy] BuyLimit at %.5f | limitRRR=%.2f", entry, limitRRR);
+      // Try gap midpoint first; fall back to min-RRR calculated price if needed
+      double gapMid    = (zHigh + zLow) / 2.0;
+      double gapMidRRR = (gapMid - sl > 0) ? (tp - gapMid) / (gapMid - sl) : 0;
+
+      if(gapMidRRR >= InpMinRRR && gapMid < ask && gapMid > sl)
+      {
+         entry = gapMid;
+         PrintFormat("[FVG_Asian_Buy] RRR low — BuyLimit at gap midpoint %.5f | RRR=%.2f", entry, gapMidRRR);
+      }
+      else
+      {
+         entry = (tp + InpMinRRR * sl) / (1.0 + InpMinRRR);
+         PrintFormat("[FVG_Asian_Buy] RRR low — BuyLimit at min-RRR price %.5f", entry);
+         if(entry >= ask || entry <= sl) { PrintFormat("[FVG_Asian_Buy] SKIP: entry(%.5f) out of range ask=%.5f sl=%.5f", entry, ask, sl); return false; }
+         double limitRRR = (entry - sl > 0) ? (tp - entry) / (entry - sl) : 0;
+         if(limitRRR < InpMinRRR) { PrintFormat("[FVG_Asian_Buy] SKIP: limitRRR %.2f < %.1f", limitRRR, InpMinRRR); return false; }
+         PrintFormat("[FVG_Asian_Buy] BuyLimit at %.5f | limitRRR=%.2f", entry, limitRRR);
+      }
    }
 
    return PlaceBuy(entry, sl, tp, "FVG_Asian_Buy");
@@ -1146,12 +1158,24 @@ bool TryFVGBuy()
    }
    else
    {
-      entry = (tp + InpMinRRR * sl) / (1.0 + InpMinRRR);
-      PrintFormat("[FVG_Buy] RRR low — BuyLimit calculated at %.5f", entry);
-      if(entry >= ask || entry <= sl) { PrintFormat("[FVG_Buy] SKIP: entry(%.5f) out of range ask=%.5f sl=%.5f", entry, ask, sl); return false; }
-      double limitRRR = (entry - sl > 0) ? (tp - entry) / (entry - sl) : 0;
-      if(limitRRR < InpMinRRR) { PrintFormat("[FVG_Buy] SKIP: limitRRR %.2f < %.1f", limitRRR, InpMinRRR); return false; }
-      PrintFormat("[FVG_Buy] BuyLimit at %.5f | limitRRR=%.2f", entry, limitRRR);
+      // Try gap midpoint first; fall back to min-RRR calculated price if needed
+      double gapMid    = (zHigh + zLow) / 2.0;
+      double gapMidRRR = (gapMid - sl > 0) ? (tp - gapMid) / (gapMid - sl) : 0;
+
+      if(gapMidRRR >= InpMinRRR && gapMid < ask && gapMid > sl)
+      {
+         entry = gapMid;
+         PrintFormat("[FVG_Buy] RRR low — BuyLimit at gap midpoint %.5f | RRR=%.2f", entry, gapMidRRR);
+      }
+      else
+      {
+         entry = (tp + InpMinRRR * sl) / (1.0 + InpMinRRR);
+         PrintFormat("[FVG_Buy] RRR low — BuyLimit at min-RRR price %.5f", entry);
+         if(entry >= ask || entry <= sl) { PrintFormat("[FVG_Buy] SKIP: entry(%.5f) out of range ask=%.5f sl=%.5f", entry, ask, sl); return false; }
+         double limitRRR = (entry - sl > 0) ? (tp - entry) / (entry - sl) : 0;
+         if(limitRRR < InpMinRRR) { PrintFormat("[FVG_Buy] SKIP: limitRRR %.2f < %.1f", limitRRR, InpMinRRR); return false; }
+         PrintFormat("[FVG_Buy] BuyLimit at %.5f | limitRRR=%.2f", entry, limitRRR);
+      }
    }
 
    bool ok = PlaceBuy(entry, sl, tp, "FVG_Buy");
@@ -1365,14 +1389,27 @@ bool TryFVGSell()
    if(marketRRR >= InpMinRRR)
    {
       entry = bid;
+      PrintFormat("[FVG_Sell] RRR ok — market sell at %.5f", entry);
    }
    else
    {
-      entry = (tp + InpMinRRR * sl) / (1.0 + InpMinRRR);
-      if(entry <= bid || entry >= sl) return false;
-      double limitRRR = (sl - entry > 0) ? (entry - tp) / (sl - entry) : 0;
-      if(limitRRR < InpMinRRR) return false;
-      PrintFormat("[FVG_Sell] Market RRR %.2f < %.1f — SellLimit at %.5f", marketRRR, InpMinRRR, entry);
+      // Try gap midpoint first; fall back to min-RRR calculated price if needed
+      double gapMid    = (zHigh + zLow) / 2.0;
+      double gapMidRRR = (sl - gapMid > 0) ? (gapMid - tp) / (sl - gapMid) : 0;
+
+      if(gapMidRRR >= InpMinRRR && gapMid > bid && gapMid < sl)
+      {
+         entry = gapMid;
+         PrintFormat("[FVG_Sell] RRR low — SellLimit at gap midpoint %.5f | RRR=%.2f", entry, gapMidRRR);
+      }
+      else
+      {
+         entry = (tp + InpMinRRR * sl) / (1.0 + InpMinRRR);
+         if(entry <= bid || entry >= sl) return false;
+         double limitRRR = (sl - entry > 0) ? (entry - tp) / (sl - entry) : 0;
+         if(limitRRR < InpMinRRR) return false;
+         PrintFormat("[FVG_Sell] RRR low — SellLimit at min-RRR price %.5f | limitRRR=%.2f", entry, limitRRR);
+      }
    }
 
    bool ok = PlaceSell(entry, sl, tp, "FVG_Sell");
