@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //|                       NomShadoNgidi_EA.mq5                       |
 //|            Expert Advisor — Nomshado Ngidi Trading Plan Q1 2025  |
-//|           Instrument: US_30 (US.30) ONLY  |  Version 1.05        |
+//|           Instrument: US_30 (US.30) ONLY  |  Version 1.06        |
 //+------------------------------------------------------------------+
 //
 //  ⚠ THIS EA WILL ONLY RUN ON US_30 (also accepted: US.30, US30)
@@ -11,7 +11,7 @@
 //  BUY  → FVG Asian Buy | FVG Buy | Straight Buy
 //  SELL → FVG Asian Sell | FVG Sell | Straight Sell
 //
-//  AUTOMATED FEATURES (v1.05):
+//  AUTOMATED FEATURES (v1.06):
 //  • Auto-Bias   — D1 trend direction derived from last 5 candles (no manual input)
 //  • News Filter — blocks all new trades on CPI, PPI and NFP windows (configurable buffer)
 //
@@ -24,7 +24,7 @@
 //
 //+------------------------------------------------------------------+
 #property copyright   "Nomshado Ngidi"
-#property version     "1.05"
+#property version     "1.06"
 #property description "MT5 EA — Nomshado Ngidi Trading Plan Q1 2025"
 #property description "⚠ Instrument: US_30 (US.30) ONLY — will refuse all other symbols"
 #property description "Setups: FVG Buy/Sell, Asian FVG, Straight"
@@ -70,6 +70,7 @@ input group "=== Trade Settings ==="
 input ENUM_EXEC_MODE InpExecMode = EXEC_AUTO; // Execution mode: Auto | Market | Limit/Pending
 input int    InpMaxDailyTrades = 2;    // Max trades per day (plan: max 2)
 input bool   InpAllowMonday    = false;// Allow Monday trading (plan: NO)
+input int    InpPendingCancelHour = 11; // Cancel unfilled limit orders at this NY hour (plan: 11)
 input int    InpSTH_Lookback   = 20;   // Short-term High/Low lookback (H1 bars)
 input int    InpMagicNumber    = 20250101; // EA Magic Number
 input double InpD1ReversalBodyRatio = 0.5; // FVG Asian: min D1 reversal body/range ratio (0–1)
@@ -119,12 +120,13 @@ bool     g_Milestone500k       = false;
 bool     g_Milestone1m         = false;
 
 // Per-day setup guards
-bool     g_FVGBuyDone         = false;
-bool     g_StraightBuyDone    = false;
-bool     g_FVGSellDone        = false;
-bool     g_StraightSellDone   = false;
-bool     g_AsianSellSLHit     = false;
-bool     g_AsianSellReentered = false;
+bool     g_FVGBuyDone              = false;
+bool     g_StraightBuyDone         = false;
+bool     g_FVGSellDone             = false;
+bool     g_StraightSellDone        = false;
+bool     g_AsianSellSLHit          = false;
+bool     g_AsianSellReentered      = false;
+bool     g_PendingsCancelledToday  = false;  // true once limit orders swept at InpPendingCancelHour
 
 // Bar tracker — EA only acts on newly opened H1 bars
 datetime g_LastBar = 0;
@@ -152,7 +154,7 @@ int OnInit()
    trade.SetDeviationInPoints(20);
    trade.SetTypeFilling(ORDER_FILLING_FOK);
 
-   PrintFormat("=== Nomshado Ngidi EA v1.05 Initialised ===");
+   PrintFormat("=== Nomshado Ngidi EA v1.06 Initialised ===");
    PrintFormat("Symbol: %s | Pip Size: %.5f", _Symbol, g_PipSize);
    PrintFormat("Risk per trade: Account Balance / 6 | Min RRR 1:%.1f", InpMinRRR);
    PrintFormat("Asian NY: %02d:00-%02d:00 | London KZ: %02d:00 | NY KZ: %02d:00-%02d:00",
@@ -307,12 +309,50 @@ void CheckBalanceAlerts()
 }
 
 //============================================================
+//  PENDING ORDER CLEANUP — cancel all unfilled limit/stop orders at InpPendingCancelHour
+//============================================================
+
+void CancelPendingOrders()
+{
+   int cancelled = 0;
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket == 0) continue;
+      if(OrderGetString(ORDER_SYMBOL)  != _Symbol)                 continue;
+      if((int)OrderGetInteger(ORDER_MAGIC) != InpMagicNumber)      continue;
+
+      ENUM_ORDER_TYPE otype = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
+      if(otype != ORDER_TYPE_BUY_LIMIT  &&
+         otype != ORDER_TYPE_SELL_LIMIT &&
+         otype != ORDER_TYPE_BUY_STOP   &&
+         otype != ORDER_TYPE_SELL_STOP) continue;
+
+      if(trade.OrderDelete(ticket))
+         cancelled++;
+      else
+         PrintFormat("[CancelPending] FAILED ticket #%I64u — error %d", ticket, GetLastError());
+   }
+
+   g_PendingsCancelledToday = true;
+
+   if(cancelled > 0)
+      PrintFormat("[CancelPending] Cancelled %d pending order(s) at %02d:00 ET", cancelled, InpPendingCancelHour);
+   else
+      PrintFormat("[CancelPending] No pending orders found at %02d:00 ET", InpPendingCancelHour);
+}
+
+//============================================================
 //  MAIN TICK — only acts on newly opened H1 bar
 //============================================================
 
 void OnTick()
 {
    CheckBalanceAlerts();
+
+   // Cancel all unfilled limit/stop orders at InpPendingCancelHour (default 11am ET)
+   if(!g_PendingsCancelledToday && CurrentHour() >= InpPendingCancelHour)
+      CancelPendingOrders();
 
    datetime curBar = iTime(_Symbol, PERIOD_H1, 0);
    if(curBar == g_LastBar) return;
@@ -430,14 +470,15 @@ void ResetDailyCount()
    datetime today = TodayMidnight();
    if(today != g_LastDay)
    {
-      g_DailyCount          = 0;
-      g_LastDay             = today;
-      g_FVGBuyDone          = false;
-      g_StraightBuyDone     = false;
-      g_FVGSellDone         = false;
-      g_StraightSellDone    = false;
-      g_AsianSellSLHit      = false;
-      g_AsianSellReentered  = false;
+      g_DailyCount               = 0;
+      g_LastDay                  = today;
+      g_FVGBuyDone               = false;
+      g_StraightBuyDone          = false;
+      g_FVGSellDone              = false;
+      g_StraightSellDone         = false;
+      g_AsianSellSLHit           = false;
+      g_AsianSellReentered       = false;
+      g_PendingsCancelledToday   = false;
    }
 }
 
