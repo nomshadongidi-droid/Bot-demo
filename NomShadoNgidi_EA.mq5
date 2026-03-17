@@ -558,36 +558,33 @@ void AnalyseAsianSession()
 }
 
 //============================================================
-//  FVG DETECTION (ICT Fair Value Gap — 3-candle wick gap)
+//  FVG DETECTION
 //
-//  3-candle pattern (bar numbering, newest→oldest):
-//    startBar   = candle 3 (newest  — defines gap top for bullish)
-//    startBar+1 = candle 2 (impulse — the big move candle)
-//    startBar+2 = candle 1 (oldest  — defines gap bottom for bullish)
+//  2-candle body gap (bar numbering, newest→oldest):
+//    startBar   = candle 2 (newest)
+//    startBar+1 = candle 1 (oldest)
 //
-//  Bullish FVG: candle1.HIGH < candle3.LOW  → gap between wicks going up
-//  Bearish FVG: candle1.LOW  > candle3.HIGH → gap between wicks going down
-//  Zone = the untraded price range between those two wick levels
+//  Bullish FVG: candle1 body top   <= candle2 body bottom (gap up between bodies)
+//  Bearish FVG: candle1 body bottom >= candle2 body top   (gap down between bodies)
 //  Returns: 1=bullish, -1=bearish, 0=none
 //============================================================
 
 int DetectFVG(int startBar)
 {
-   // 3-candle FVG (ICT definition):
-   //   startBar+2 = candle 1 (oldest)
-   //   startBar+1 = impulse candle (middle)
-   //   startBar   = candle 3 (newest)
-   // Bullish FVG: candle1.HIGH < candle3.LOW  (wick gap up — price never traded there)
-   // Bearish FVG: candle1.LOW  > candle3.HIGH (wick gap down — price never traded there)
-   if(startBar < 1 || startBar + 2 >= iBars(_Symbol, PERIOD_H1)) return 0;
+   // 2-candle FVG (body gap):
+   //   startBar+1 = candle 1
+   //   startBar   = candle 2
+   // Bullish FVG: candle1 body top   <= candle2 body bottom (gap up between bodies)
+   // Bearish FVG: candle1 body bottom >= candle2 body top   (gap down between bodies)
+   if(startBar < 1 || startBar + 1 >= iBars(_Symbol, PERIOD_H1)) return 0;
 
-   double c1High = iHigh(_Symbol, PERIOD_H1, startBar + 2);
-   double c1Low  = iLow (_Symbol, PERIOD_H1, startBar + 2);
-   double c3High = iHigh(_Symbol, PERIOD_H1, startBar);
-   double c3Low  = iLow (_Symbol, PERIOD_H1, startBar);
+   double c1BodyTop    = MathMax(iOpen(_Symbol, PERIOD_H1, startBar + 1), iClose(_Symbol, PERIOD_H1, startBar + 1));
+   double c1BodyBottom = MathMin(iOpen(_Symbol, PERIOD_H1, startBar + 1), iClose(_Symbol, PERIOD_H1, startBar + 1));
+   double c2BodyTop    = MathMax(iOpen(_Symbol, PERIOD_H1, startBar),     iClose(_Symbol, PERIOD_H1, startBar));
+   double c2BodyBottom = MathMin(iOpen(_Symbol, PERIOD_H1, startBar),     iClose(_Symbol, PERIOD_H1, startBar));
 
-   if(c1High < c3Low)  return  1;   // bullish FVG
-   if(c1Low  > c3High) return -1;   // bearish FVG
+   if(c1BodyTop    <= c2BodyBottom) return  1;   // bullish body gap
+   if(c1BodyBottom >= c2BodyTop)    return -1;   // bearish body gap
    return 0;
 }
 
@@ -596,20 +593,20 @@ bool GetFVGZone(int startBar, double &zoneHigh, double &zoneLow)
    int type = DetectFVG(startBar);
    if(type == 0) return false;
 
-   double c1High = iHigh(_Symbol, PERIOD_H1, startBar + 2);
-   double c1Low  = iLow (_Symbol, PERIOD_H1, startBar + 2);
-   double c3High = iHigh(_Symbol, PERIOD_H1, startBar);
-   double c3Low  = iLow (_Symbol, PERIOD_H1, startBar);
+   double c1BodyTop    = MathMax(iOpen(_Symbol, PERIOD_H1, startBar + 1), iClose(_Symbol, PERIOD_H1, startBar + 1));
+   double c1BodyBottom = MathMin(iOpen(_Symbol, PERIOD_H1, startBar + 1), iClose(_Symbol, PERIOD_H1, startBar + 1));
+   double c2BodyTop    = MathMax(iOpen(_Symbol, PERIOD_H1, startBar),     iClose(_Symbol, PERIOD_H1, startBar));
+   double c2BodyBottom = MathMin(iOpen(_Symbol, PERIOD_H1, startBar),     iClose(_Symbol, PERIOD_H1, startBar));
 
    if(type == 1)
    {
-      zoneLow  = c1High;   // top of candle 1 wick
-      zoneHigh = c3Low;    // bottom of candle 3 wick
+      zoneLow  = c1BodyTop;    // top of candle 1 body
+      zoneHigh = c2BodyBottom; // bottom of candle 2 body
    }
    else
    {
-      zoneHigh = c1Low;    // bottom of candle 1 wick
-      zoneLow  = c3High;   // top of candle 3 wick
+      zoneHigh = c1BodyBottom; // bottom of candle 1 body
+      zoneLow  = c2BodyTop;    // top of candle 2 body
    }
    return (zoneHigh > zoneLow);
 }
