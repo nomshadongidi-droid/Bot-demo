@@ -34,6 +34,17 @@
 #include <Trade\OrderInfo.mqh>
 
 //============================================================
+//  EXECUTION MODE ENUM
+//============================================================
+
+enum ENUM_EXEC_MODE
+{
+   EXEC_AUTO   = 0,  // Auto — market if within 2 pips of ask/bid, else limit/stop pending
+   EXEC_MARKET = 1,  // Always market execution (instant fill at current price)
+   EXEC_LIMIT  = 2   // Always pending order (BuyLimit/BuyStop or SellLimit/SellStop)
+};
+
+//============================================================
 //  INPUT PARAMETERS
 //============================================================
 
@@ -56,6 +67,7 @@ input group "=== Stop Loss Settings ==="
 input int    InpFVGBuffer      = 10;   // SL/entry buffer in pips (10 = breathing room)
 
 input group "=== Trade Settings ==="
+input ENUM_EXEC_MODE InpExecMode = EXEC_AUTO; // Execution mode: Auto | Market | Limit/Pending
 input int    InpMaxDailyTrades = 2;    // Max trades per day (plan: max 2)
 input bool   InpAllowMonday    = false;// Allow Monday trading (plan: NO)
 input int    InpSTH_Lookback   = 20;   // Short-term High/Low lookback (H1 bars)
@@ -889,12 +901,37 @@ bool PlaceBuy(double entry, double sl, double tp, string label)
    bool   ok  = false;
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
 
-   if(MathAbs(entry - ask) <= PipsToPrice(2.0))
-      ok = trade.Buy(lots, _Symbol, 0, sl, tp, label);         // at market
-   else if(entry < ask)
-      ok = trade.BuyLimit(lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);  // limit below market
-   else
-      ok = trade.BuyStop(lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);   // stop above market
+   if(InpExecMode == EXEC_MARKET)
+   {
+      ok = trade.Buy(lots, _Symbol, 0, sl, tp, label);
+      PrintFormat("[%s] EXEC_MARKET — buy at market ask=%.5f", label, ask);
+   }
+   else if(InpExecMode == EXEC_LIMIT)
+   {
+      if(entry < ask)
+         ok = trade.BuyLimit(lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);
+      else
+         ok = trade.BuyStop(lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);
+      PrintFormat("[%s] EXEC_LIMIT — %s at %.5f", label, entry < ask ? "BuyLimit" : "BuyStop", entry);
+   }
+   else // EXEC_AUTO
+   {
+      if(MathAbs(entry - ask) <= PipsToPrice(2.0))
+      {
+         ok = trade.Buy(lots, _Symbol, 0, sl, tp, label);
+         PrintFormat("[%s] EXEC_AUTO — market buy (entry within 2 pips of ask=%.5f)", label, ask);
+      }
+      else if(entry < ask)
+      {
+         ok = trade.BuyLimit(lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);
+         PrintFormat("[%s] EXEC_AUTO — BuyLimit at %.5f (ask=%.5f)", label, entry, ask);
+      }
+      else
+      {
+         ok = trade.BuyStop(lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);
+         PrintFormat("[%s] EXEC_AUTO — BuyStop at %.5f (ask=%.5f)", label, entry, ask);
+      }
+   }
 
    if(ok)
    {
@@ -928,12 +965,42 @@ bool PlaceSell(double entry, double sl, double tp, string label)
    bool   ok  = false;
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
 
-   if(MathAbs(entry - bid) <= PipsToPrice(2.0))
+   if(InpExecMode == EXEC_MARKET)
+   {
       ok = trade.Sell(lots, _Symbol, 0, sl, tp, label);
-   else if(entry > bid + PipsToPrice(2.0))
-      ok = trade.SellLimit(lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);
-   else
-   { PrintFormat("[%s] Entry %.5f below bid %.5f — SellStop not supported", label, entry, bid); return false; }
+      PrintFormat("[%s] EXEC_MARKET — sell at market bid=%.5f", label, bid);
+   }
+   else if(InpExecMode == EXEC_LIMIT)
+   {
+      if(entry > bid)
+      {
+         ok = trade.SellLimit(lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);
+         PrintFormat("[%s] EXEC_LIMIT — SellLimit at %.5f", label, entry);
+      }
+      else
+      {
+         ok = trade.SellStop(lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);
+         PrintFormat("[%s] EXEC_LIMIT — SellStop at %.5f", label, entry);
+      }
+   }
+   else // EXEC_AUTO
+   {
+      if(MathAbs(entry - bid) <= PipsToPrice(2.0))
+      {
+         ok = trade.Sell(lots, _Symbol, 0, sl, tp, label);
+         PrintFormat("[%s] EXEC_AUTO — market sell (entry within 2 pips of bid=%.5f)", label, bid);
+      }
+      else if(entry > bid + PipsToPrice(2.0))
+      {
+         ok = trade.SellLimit(lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);
+         PrintFormat("[%s] EXEC_AUTO — SellLimit at %.5f (bid=%.5f)", label, entry, bid);
+      }
+      else
+      {
+         ok = trade.SellStop(lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);
+         PrintFormat("[%s] EXEC_AUTO — SellStop at %.5f (bid=%.5f)", label, entry, bid);
+      }
+   }
 
    if(ok)
    {
