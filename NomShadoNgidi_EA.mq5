@@ -60,6 +60,7 @@ input int    InpMaxDailyTrades = 2;    // Max trades per day (plan: max 2)
 input bool   InpAllowMonday    = false;// Allow Monday trading (plan: NO)
 input int    InpSTH_Lookback   = 20;   // Short-term High/Low lookback (H1 bars)
 input int    InpMagicNumber    = 20250101; // EA Magic Number
+input double InpD1ReversalBodyRatio = 0.5; // FVG Asian: min D1 reversal body/range ratio (0–1)
 
 input group "=== News Filter (CPI / PPI / NFP) ==="
 input bool   InpNewsFilter        = true;   // Block trading on CPI / PPI / NFP days
@@ -697,6 +698,92 @@ int AutoBias()
    return 0;
 }
 
+// Returns true when D1 bar[1] is a strong bullish reversal candle.
+// Requires:
+//   • D1 bar[2] was bearish  (prior down-move gives reversal context)
+//   • D1 bar[1] is bullish
+//   • Body of bar[1] >= InpD1ReversalBodyRatio of its full range  OR  it
+//     fully engulfs the body of bar[2]  (bullish-engulfing pattern)
+bool IsDailyBullishReversal()
+{
+   if(iBars(_Symbol, PERIOD_D1) < 3) return false;
+
+   double o1 = iOpen (_Symbol, PERIOD_D1, 1);
+   double c1 = iClose(_Symbol, PERIOD_D1, 1);
+   double h1 = iHigh (_Symbol, PERIOD_D1, 1);
+   double l1 = iLow  (_Symbol, PERIOD_D1, 1);
+   double o2 = iOpen (_Symbol, PERIOD_D1, 2);
+   double c2 = iClose(_Symbol, PERIOD_D1, 2);
+
+   if(c1 <= o1) { Print("[D1_Reversal_Bull] SKIP: bar[1] not bullish"); return false; }
+   if(c2 >= o2) { Print("[D1_Reversal_Bull] SKIP: bar[2] not bearish"); return false; }
+
+   double body  = c1 - o1;
+   double range = h1 - l1;
+
+   if(range > 0 && body / range >= InpD1ReversalBodyRatio)
+   {
+      PrintFormat("[D1_Reversal_Bull] Strong body: body/range=%.2f", body / range);
+      return true;
+   }
+
+   // Bullish engulfing: bar[1] body fully wraps bar[2] body
+   double bH2 = MathMax(o2, c2);
+   double bL2 = MathMin(o2, c2);
+   if(c1 >= bH2 && o1 <= bL2)
+   {
+      Print("[D1_Reversal_Bull] Bullish engulfing confirmed");
+      return true;
+   }
+
+   PrintFormat("[D1_Reversal_Bull] SKIP: body/range=%.2f below %.2f, not engulfing",
+               (range > 0 ? body / range : 0), InpD1ReversalBodyRatio);
+   return false;
+}
+
+// Returns true when D1 bar[1] is a strong bearish reversal candle.
+// Requires:
+//   • D1 bar[2] was bullish  (prior up-move gives reversal context)
+//   • D1 bar[1] is bearish
+//   • Body of bar[1] >= InpD1ReversalBodyRatio of its full range  OR  it
+//     fully engulfs the body of bar[2]  (bearish-engulfing pattern)
+bool IsDailyBearishReversal()
+{
+   if(iBars(_Symbol, PERIOD_D1) < 3) return false;
+
+   double o1 = iOpen (_Symbol, PERIOD_D1, 1);
+   double c1 = iClose(_Symbol, PERIOD_D1, 1);
+   double h1 = iHigh (_Symbol, PERIOD_D1, 1);
+   double l1 = iLow  (_Symbol, PERIOD_D1, 1);
+   double o2 = iOpen (_Symbol, PERIOD_D1, 2);
+   double c2 = iClose(_Symbol, PERIOD_D1, 2);
+
+   if(c1 >= o1) { Print("[D1_Reversal_Bear] SKIP: bar[1] not bearish"); return false; }
+   if(c2 <= o2) { Print("[D1_Reversal_Bear] SKIP: bar[2] not bullish"); return false; }
+
+   double body  = o1 - c1;
+   double range = h1 - l1;
+
+   if(range > 0 && body / range >= InpD1ReversalBodyRatio)
+   {
+      PrintFormat("[D1_Reversal_Bear] Strong body: body/range=%.2f", body / range);
+      return true;
+   }
+
+   // Bearish engulfing: bar[1] body fully wraps bar[2] body
+   double bH2 = MathMax(o2, c2);
+   double bL2 = MathMin(o2, c2);
+   if(o1 >= bH2 && c1 <= bL2)
+   {
+      Print("[D1_Reversal_Bear] Bearish engulfing confirmed");
+      return true;
+   }
+
+   PrintFormat("[D1_Reversal_Bear] SKIP: body/range=%.2f below %.2f, not engulfing",
+               (range > 0 ? body / range : 0), InpD1ReversalBodyRatio);
+   return false;
+}
+
 // Returns true when the current time falls inside the configurable news buffer
 // window for a high-impact USD event whose name contains "CPI", "PPI", or "Nonfarm".
 // Uses the built-in MT5 Economic Calendar API — no external data feed needed.
@@ -896,6 +983,7 @@ bool TryFVGAsianBuy()
 {
    if(g_AsianLastBar < 0) return false;
    if(AutoBias() != 1) return false;   // require bullish D1 bias
+   if(!IsDailyBullishReversal()) return false;  // require strong daily reversal candle
 
    double zHigh, zLow;
    if(!GetFVGZone(g_AsianLastBar, zHigh, zLow)) return false;
@@ -1111,6 +1199,7 @@ bool TryFVGAsianSell()
 {
    if(g_AsianLastBar < 0) return false;
    if(AutoBias() != -1) return false;  // require bearish D1 bias
+   if(!IsDailyBearishReversal()) return false;  // require strong daily reversal candle
 
    double zHigh, zLow;
    if(!GetFVGZone(g_AsianLastBar, zHigh, zLow)) return false;
