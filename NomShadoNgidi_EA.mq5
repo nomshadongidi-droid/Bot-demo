@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //|                       NomShadoNgidi_EA.mq5                       |
 //|            Expert Advisor — Nomshado Ngidi Trading Plan Q1 2025  |
-//|           Instrument: US_30 (US.30) ONLY  |  Version 1.06        |
+//|           Instrument: US_30 (US.30) ONLY  |  Version 1.07        |
 //+------------------------------------------------------------------+
 //
 //  ⚠ THIS EA WILL ONLY RUN ON US_30 (also accepted: US.30, US30)
@@ -11,7 +11,7 @@
 //  BUY  → FVG Asian Buy | FVG Buy | Straight Buy
 //  SELL → FVG Asian Sell | FVG Sell | Straight Sell
 //
-//  AUTOMATED FEATURES (v1.06):
+//  AUTOMATED FEATURES (v1.07):
 //  • Auto-Bias   — D1 trend direction derived from last 5 candles (no manual input)
 //  • News Filter — blocks all new trades on CPI, PPI and NFP windows (configurable buffer)
 //
@@ -24,7 +24,7 @@
 //
 //+------------------------------------------------------------------+
 #property copyright   "Nomshado Ngidi"
-#property version     "1.06"
+#property version     "1.07"
 #property description "MT5 EA — Nomshado Ngidi Trading Plan Q1 2025"
 #property description "⚠ Instrument: US_30 (US.30) ONLY — will refuse all other symbols"
 #property description "Setups: FVG Buy/Sell, Asian FVG, Straight"
@@ -154,7 +154,7 @@ int OnInit()
    trade.SetDeviationInPoints(20);
    trade.SetTypeFilling(ORDER_FILLING_FOK);
 
-   PrintFormat("=== Nomshado Ngidi EA v1.06 Initialised ===");
+   PrintFormat("=== Nomshado Ngidi EA v1.07 Initialised ===");
    PrintFormat("Symbol: %s | Pip Size: %.5f", _Symbol, g_PipSize);
    PrintFormat("Risk per trade: Account Balance / 6 | Min RRR 1:%.1f", InpMinRRR);
    PrintFormat("Asian NY: %02d:00-%02d:00 | London KZ: %02d:00 | NY KZ: %02d:00-%02d:00",
@@ -601,37 +601,38 @@ void AnalyseAsianSession()
 //============================================================
 //  FVG DETECTION
 //
-//  2-candle body gap (bar numbering, newest→oldest):
+//  2-candle gap (bar numbering, newest→oldest):
 //    startBar   = candle 2 (newest)
 //    startBar+1 = candle 1 (oldest)
 //
-//  Bullish FVG: candle2 body bottom > candle1 body top  (gap up between bodies)
-//  Bearish FVG: candle2 body top    < candle1 body bottom (gap down between bodies)
-//  Even a 1–2 pip body gap qualifies.
+//  Bullish FVG: candle2 body bottom > candle1 HIGH (wick)
+//               Gap zone = [ C1.high → C2.body.bottom ]
+//
+//  Bearish FVG: candle2 body top    < candle1 LOW  (wick)
+//               Gap zone = [ C2.body.top → C1.low ]
+//
+//  Even a 1–2 pip gap above/below the wick qualifies.
 //  Returns: 1=bullish, -1=bearish, 0=none
 //============================================================
 
 int DetectFVG(int startBar)
 {
-   // 2-candle body gap definition:
    //   startBar+1 = candle 1 (older)
    //   startBar   = candle 2 (newer)
-   // Bullish FVG: candle2 body bottom > candle1 body top
-   // Bearish FVG: candle2 body top    < candle1 body bottom
+   // Bullish: C2 body bottom gapped above C1 HIGH (wick top)
+   // Bearish: C2 body top    gapped below C1 LOW  (wick bottom)
    if(startBar < 0 || startBar + 1 >= iBars(_Symbol, PERIOD_H1)) return 0;
 
-   double c1Open  = iOpen (_Symbol, PERIOD_H1, startBar + 1);
-   double c1Close = iClose(_Symbol, PERIOD_H1, startBar + 1);
+   double c1High  = iHigh (_Symbol, PERIOD_H1, startBar + 1);
+   double c1Low   = iLow  (_Symbol, PERIOD_H1, startBar + 1);
    double c2Open  = iOpen (_Symbol, PERIOD_H1, startBar);
    double c2Close = iClose(_Symbol, PERIOD_H1, startBar);
 
-   double c1BodyTop    = MathMax(c1Open, c1Close);  // highest body point of candle 1
-   double c1BodyBottom = MathMin(c1Open, c1Close);  // lowest body point of candle 1
-   double c2BodyTop    = MathMax(c2Open, c2Close);  // highest body point of candle 2
-   double c2BodyBottom = MathMin(c2Open, c2Close);  // lowest body point of candle 2
+   double c2BodyTop    = MathMax(c2Open, c2Close);
+   double c2BodyBottom = MathMin(c2Open, c2Close);
 
-   if(c2BodyBottom > c1BodyTop)    return  1;  // bullish body gap: candle 2 gapped up
-   if(c2BodyTop    < c1BodyBottom) return -1;  // bearish body gap: candle 2 gapped down
+   if(c2BodyBottom > c1High) return  1;  // bullish: C2 body cleared C1 wick high
+   if(c2BodyTop    < c1Low)  return -1;  // bearish: C2 body cleared C1 wick low
    return 0;
 }
 
@@ -640,25 +641,23 @@ bool GetFVGZone(int startBar, double &zoneHigh, double &zoneLow)
    int type = DetectFVG(startBar);
    if(type == 0) return false;
 
-   double c1Open  = iOpen (_Symbol, PERIOD_H1, startBar + 1);
-   double c1Close = iClose(_Symbol, PERIOD_H1, startBar + 1);
+   double c1High  = iHigh (_Symbol, PERIOD_H1, startBar + 1);
+   double c1Low   = iLow  (_Symbol, PERIOD_H1, startBar + 1);
    double c2Open  = iOpen (_Symbol, PERIOD_H1, startBar);
    double c2Close = iClose(_Symbol, PERIOD_H1, startBar);
 
-   double c1BodyTop    = MathMax(c1Open, c1Close);
-   double c1BodyBottom = MathMin(c1Open, c1Close);
    double c2BodyTop    = MathMax(c2Open, c2Close);
    double c2BodyBottom = MathMin(c2Open, c2Close);
 
    if(type == 1)
    {
-      zoneLow  = c1BodyTop;     // top of candle 1 body
-      zoneHigh = c2BodyBottom;  // bottom of candle 2 body
+      zoneLow  = c1High;       // top of candle 1 wick
+      zoneHigh = c2BodyBottom; // bottom of candle 2 body
    }
    else
    {
-      zoneHigh = c1BodyBottom;  // bottom of candle 1 body
-      zoneLow  = c2BodyTop;     // top of candle 2 body
+      zoneHigh = c1Low;        // bottom of candle 1 wick
+      zoneLow  = c2BodyTop;    // top of candle 2 body
    }
    return (zoneHigh > zoneLow);
 }
