@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //|                       NomShadoNgidi_EA.mq5                       |
 //|            Expert Advisor — Nomshado Ngidi Trading Plan Q1 2025  |
-//|           Instrument: US_30 (US.30) ONLY  |  Version 1.07        |
+//|           Instrument: US_30 (US.30) ONLY  |  Version 1.08        |
 //+------------------------------------------------------------------+
 //
 //  ⚠ THIS EA WILL ONLY RUN ON US_30 (also accepted: US.30, US30)
@@ -11,9 +11,10 @@
 //  BUY  → FVG Asian Buy | FVG Buy | Straight Buy
 //  SELL → FVG Asian Sell | FVG Sell | Straight Sell
 //
-//  AUTOMATED FEATURES (v1.07):
+//  AUTOMATED FEATURES (v1.08):
 //  • Auto-Bias   — D1 trend direction derived from last 5 candles (no manual input)
 //  • News Filter — blocks all new trades on CPI, PPI and NFP windows (configurable buffer)
+//  • Risk %      — configurable InpRiskPercent (default 2%) replaces hardcoded balance/6
 //
 //  HOW TO INSTALL:
 //  1. Copy this file to: MT5 → File → Open Data Folder → MQL5 → Experts
@@ -24,7 +25,7 @@
 //
 //+------------------------------------------------------------------+
 #property copyright   "Nomshado Ngidi"
-#property version     "1.07"
+#property version     "1.08"
 #property description "MT5 EA — Nomshado Ngidi Trading Plan Q1 2025"
 #property description "⚠ Instrument: US_30 (US.30) ONLY — will refuse all other symbols"
 #property description "Setups: FVG Buy/Sell, Asian FVG, Straight"
@@ -62,6 +63,7 @@ input int    InpTradingEndNY          = 10;  // Trading Window End — NY time (
 
 input group "=== Risk Management ==="
 input double InpMinRRR         = 2.0;  // Minimum Risk:Reward Ratio (1:2 per plan)
+input double InpRiskPercent    = 2.0;  // Risk per trade as % of balance (default 2% — do NOT exceed 5%)
 
 input group "=== Stop Loss Settings ==="
 input int    InpFVGBuffer      = 10;   // SL/entry buffer in pips (10 = breathing room)
@@ -154,9 +156,9 @@ int OnInit()
    trade.SetDeviationInPoints(20);
    trade.SetTypeFilling(ORDER_FILLING_FOK);
 
-   PrintFormat("=== Nomshado Ngidi EA v1.07 Initialised ===");
+   PrintFormat("=== Nomshado Ngidi EA v1.08 Initialised ===");
    PrintFormat("Symbol: %s | Pip Size: %.5f", _Symbol, g_PipSize);
-   PrintFormat("Risk per trade: Account Balance / 6 | Min RRR 1:%.1f", InpMinRRR);
+   PrintFormat("Risk per trade: %.1f%% of balance | Min RRR 1:%.1f", InpRiskPercent, InpMinRRR);
    PrintFormat("Asian NY: %02d:00-%02d:00 | London KZ: %02d:00 | NY KZ: %02d:00-%02d:00",
                InpAsianStartNY, InpAsianEndNY, InpLondonStartNY, InpNYKillZoneNY, InpTradingEndNY);
    PrintFormat("Time base: Eastern Time (auto DST) — %s (UTC%d) | Max daily trades: %d",
@@ -489,8 +491,10 @@ double CalcLotSize(double slPips)
 {
    if(slPips <= 0) return 0;
 
-   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-   double lots    = (balance / 6.0) / slPips / 10.0;
+   double balance  = AccountInfoDouble(ACCOUNT_BALANCE);
+   double riskPct  = MathMax(0.1, MathMin(InpRiskPercent, 20.0));  // clamp 0.1–20%
+   double riskAmt  = balance * riskPct / 100.0;
+   double lots     = riskAmt / slPips / 10.0;
 
    double step   = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
    double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
@@ -499,8 +503,8 @@ double CalcLotSize(double slPips)
    lots = MathRound(lots / step) * step;
    lots = MathMax(minLot, MathMin(maxLot, lots));
 
-   PrintFormat("CalcLotSize: balance=%.2f risk=%.2f SL=%.1f pips → lots=%.2f",
-               balance, balance / 6.0, slPips, lots);
+   PrintFormat("CalcLotSize: balance=%.2f risk=%.1f%%=%.2f SL=%.1f pips → lots=%.2f",
+               balance, riskPct, riskAmt, slPips, lots);
    return lots;
 }
 
