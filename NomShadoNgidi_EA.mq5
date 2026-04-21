@@ -1270,7 +1270,15 @@ bool TryStraightBuy()
 
    double tp;
    if(g_AllAsianBearish && g_AsianHigh > 0 && g_AsianHigh > entry)
+   {
       tp = g_AsianHigh;
+      double minTP = entry + InpMinRRR * (entry - sl);
+      if(tp < minTP)
+      {
+         PrintFormat("[Straight_Buy] Asian High TP %.5f below min RRR — extending to %.5f", tp, minTP);
+         tp = minTP;
+      }
+   }
    else
       tp = GetSTHigh(InpSTH_Lookback);
 
@@ -1505,7 +1513,15 @@ bool TryStraightSell()
 
    double tp;
    if(g_AllAsianBearish && g_AsianLow > 0 && g_AsianLow < entry)
+   {
       tp = g_AsianLow;
+      double minTP = entry - InpMinRRR * (sl - entry);
+      if(tp > minTP)
+      {
+         PrintFormat("[Straight_Sell] Asian Low TP %.5f above min RRR — extending to %.5f", tp, minTP);
+         tp = minTP;
+      }
+   }
    else
       tp = GetSTLow(InpSTH_Lookback);
 
