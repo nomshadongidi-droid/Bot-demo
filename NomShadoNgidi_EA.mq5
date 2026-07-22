@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //|                       NomShadoNgidi_EA.mq5                       |
 //|            Expert Advisor — Nomshado Ngidi Trading Plan          |
-//|           Instrument: US30 / US_30 / US.30  |  Version 1.50        |
+//|           Instrument: US30 / US_30 / US.30  |  Version 1.51        |
 //+------------------------------------------------------------------+
 //
 //  ⚠ THIS EA WILL ONLY RUN ON US_30 (also accepted: US.30, US30)
@@ -10,6 +10,13 @@
 //  SETUP MODELS IMPLEMENTED:
 //  BUY  → FVG Asian Buy | FVG Buy | Straight Buy
 //  SELL → FVG Asian Sell | FVG Sell | Straight Sell
+//
+//  v1.51 CHANGES (from v1.50):
+//  • OnInit guard: now prints which condition blocked the startup scan
+//    e.g. "[Init] Guard: InWindow=Y NewsBlock=N DailyCount=0:Y BothBroken=Y"
+//  • TryFVGBuy / TryFVGSell: prints each bar in the 02:00–09:00 ET scan window
+//    showing body vs prevHigh/prevLow and the gap, so you can see exactly why
+//    no FVG is found when the scan returns empty
 //
 //  v1.50 CHANGES (from v1.49):
 //  • FVG Buy / FVG Sell: when RR < 1:2, now places a visible LIMIT ORDER
@@ -342,11 +349,18 @@ int OnInit()
    // This ensures pending 1:2 levels are set even if EA is restarted mid-session
    ResetDailyCount();
    AnalyseAsianSession();
-   if(IsInTradingWindow() && !IsHighImpactNewsWindow() &&
-      g_DailyCount == 0 && !BothAsianLevelsBroken())
    {
-      Print("[Init] Scanning for existing FVGs on startup...");
-      if(!ScanBuySetups()) ScanSellSetups();
+      bool dbgWin  = IsInTradingWindow();
+      bool dbgNews = IsHighImpactNewsWindow();
+      bool dbgCnt  = (g_DailyCount == 0);
+      bool dbgBoth = BothAsianLevelsBroken();
+      PrintFormat("[Init] Guard: InWindow=%s NewsBlock=%s DailyCount=0:%s BothBroken=%s",
+                  dbgWin?"Y":"N", dbgNews?"Y":"N", dbgCnt?"Y":"N", dbgBoth?"Y":"N");
+      if(dbgWin && !dbgNews && dbgCnt && !dbgBoth)
+      {
+         Print("[Init] Scanning for existing FVGs on startup...");
+         if(!ScanBuySetups()) ScanSellSetups();
+      }
    }
 
    return INIT_SUCCEEDED;
@@ -1610,9 +1624,14 @@ bool TryFVGBuy()
       if(bodyLow > prevHigh)
       {
          fvgBar = i;
-         PrintFormat("[FVG_Buy] Bullish FVG at bar[%d] %02d:00 ET body(%.5f–%.5f) above bar[%d] high %.5f",
+         PrintFormat("[FVG_Buy] Bullish FVG at bar[%d] %02d:00 ET body(%.2f–%.2f) above bar[%d] high %.2f",
                      i, bDt.hour, bodyLow, bodyHigh, i+1, prevHigh);
          break;
+      }
+      else
+      {
+         PrintFormat("[FVG_Buy] bar[%d] %02d:00 ET: body=%.2f prevHigh=%.2f gap=%.2f — no FVG",
+                     i, bDt.hour, bodyLow, prevHigh, bodyLow - prevHigh);
       }
    }
 
@@ -1887,9 +1906,14 @@ bool TryFVGSell()
       if(bodyHigh < prevLow)
       {
          fvgBar = i;
-         PrintFormat("[FVG_Sell] Bearish FVG at bar[%d] %02d:00 ET body(%.5f–%.5f) below bar[%d] low %.5f",
+         PrintFormat("[FVG_Sell] Bearish FVG at bar[%d] %02d:00 ET body(%.2f–%.2f) below bar[%d] low %.2f",
                      i, bDt.hour, bodyLow, bodyHigh, i+1, prevLow);
          break;
+      }
+      else
+      {
+         PrintFormat("[FVG_Sell] bar[%d] %02d:00 ET: body=%.2f prevLow=%.2f gap=%.2f — no FVG",
+                     i, bDt.hour, bodyHigh, prevLow, bodyHigh - prevLow);
       }
    }
 
