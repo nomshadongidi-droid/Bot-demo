@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //|                       NomShadoNgidi_EA.mq5                       |
 //|            Expert Advisor — Nomshado Ngidi Trading Plan          |
-//|           Instrument: US30 / US_30 / US.30  |  Version 1.38        |
+//|           Instrument: US30 / US_30 / US.30  |  Version 1.50        |
 //+------------------------------------------------------------------+
 //
 //  ⚠ THIS EA WILL ONLY RUN ON US_30 (also accepted: US.30, US30)
@@ -10,6 +10,16 @@
 //  SETUP MODELS IMPLEMENTED:
 //  BUY  → FVG Asian Buy | FVG Buy | Straight Buy
 //  SELL → FVG Asian Sell | FVG Sell | Straight Sell
+//
+//  v1.50 CHANGES (from v1.49):
+//  • FVG Buy / FVG Sell: when RR < 1:2, now places a visible LIMIT ORDER
+//    in MT5's order book at the exact price that achieves 1:2 RR
+//    (was: invisible tick-by-tick monitoring then market order)
+//    - RR >= 1:2 → market entry immediately (unchanged)
+//    - 1.5 <= RR < 1:2 → place BuyLimit/SellLimit at (tp + 2*sl) / 3
+//    - RR < 1.5 → skip (insufficient setup quality)
+//  • Removed CheckFVGPendingEntry (tick monitoring) — no longer needed
+//  • Removed g_FVGBuyPending12 / g_FVGSellPending12 global variables
 //
 //  v1.33 CHANGES (from v1.32):
 //  • Straight Buy / Sell window corrected:
@@ -191,8 +201,8 @@
 //
 //+------------------------------------------------------------------+
 #property copyright   "Nomshado Ngidi"
-#property version     "1.49"
-#property description "MT5 EA — Nomshado Ngidi Trading Plan v1.49"
+#property version     "1.50"
+#property description "MT5 EA — Nomshado Ngidi Trading Plan v1.50"
 #property description "⚠ Instrument: US30 / US_30 / US.30 ONLY"
 #property description "Setups: FVG Buy/Sell, Asian FVG, Straight Buy/Sell"
 
@@ -286,13 +296,6 @@ bool     g_StraightBuyDone         = false;
 bool     g_FVGSellDone             = false;
 bool     g_StraightSellDone        = false;
 
-// v1.47: Pending FVG 1:2 entry levels — checked on every tick
-double   g_FVGBuyPending12         = 0;  // price at which FVG Buy gets 1:2 RR
-double   g_FVGBuyPendingSL         = 0;
-double   g_FVGBuyPendingTP         = 0;
-double   g_FVGSellPending12        = 0;  // price at which FVG Sell gets 1:2 RR
-double   g_FVGSellPendingSL        = 0;
-double   g_FVGSellPendingTP        = 0;
 bool     g_AsianSellSLHit          = false;
 bool     g_AsianSellReentered      = false;
 bool     g_PendingsCancelledToday  = false;
@@ -320,7 +323,7 @@ int OnInit()
    trade.SetDeviationInPoints(20);
    trade.SetTypeFilling(ORDER_FILLING_FOK);
 
-   PrintFormat("=== Nomshado Ngidi EA v1.49 Initialised ===");
+   PrintFormat("=== Nomshado Ngidi EA v1.50 Initialised ===");
    PrintFormat("Symbol: %s | Pip Size: %.5f", _Symbol, g_PipSize);
    PrintFormat("Risk per trade: Balance / 6 (%.2f%%) | Min RRR 1:%.1f", 100.0/6.0, InpMinRRR);
    PrintFormat("London KZ: %02d:00 | NY KZ: %02d:00–%02d:00",
@@ -602,47 +605,11 @@ void CheckBreakEvenOvernight()
 //  MAIN TICK
 //============================================================
 
-// CheckFVGPendingEntry — v1.47
-// Called on EVERY TICK — fires market entry if price reaches the 1:2 level
-// during the fill candle (before bar close)
-void CheckFVGPendingEntry()
-{
-   if(g_FVGBuyDone || g_StraightBuyDone || g_FVGSellDone || g_StraightSellDone) return;
-   if(g_DailyCount >= InpMaxDailyTrades) return;
-
-   // FVG Buy pending — price dropped to 1:2 entry level
-   if(g_FVGBuyPending12 > 0)
-   {
-      double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-      if(ask <= g_FVGBuyPending12)
-      {
-         PrintFormat("[FVG_Buy] Price %.5f reached 1:2 entry level %.5f → market entry!", ask, g_FVGBuyPending12);
-         bool ok = PlaceBuy(ask, g_FVGBuyPendingSL, g_FVGBuyPendingTP, "FVG_Buy");
-         if(ok) { g_FVGBuyDone = true; g_FVGBuyPending12 = 0; }
-      }
-   }
-
-   // FVG Sell pending — price rose to 1:2 entry level
-   if(g_FVGSellPending12 > 0)
-   {
-      double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-      if(bid >= g_FVGSellPending12)
-      {
-         PrintFormat("[FVG_Sell] Price %.5f reached 1:2 entry level %.5f → market entry!", bid, g_FVGSellPending12);
-         bool ok = PlaceSell(bid, g_FVGSellPendingSL, g_FVGSellPendingTP, "FVG_Sell");
-         if(ok) { g_FVGSellDone = true; g_FVGSellPending12 = 0; }
-      }
-   }
-}
-
 void OnTick()
 {
    CheckBreakEvenOvernight();
    CheckStraightBreakEven();
    CheckBalanceAlerts();
-
-   // v1.47: Check on EVERY TICK if price has reached the pending FVG 1:2 level
-   CheckFVGPendingEntry();
 
    if(!g_PendingsCancelledToday && CurrentHour() >= InpPendingCancelHour)
       CancelPendingOrders();
@@ -784,12 +751,6 @@ void ResetDailyCount()
       g_StraightBuyDone         = false;
       g_FVGSellDone             = false;
       g_StraightSellDone        = false;
-      g_FVGBuyPending12         = 0;
-      g_FVGBuyPendingSL         = 0;
-      g_FVGBuyPendingTP         = 0;
-      g_FVGSellPending12        = 0;
-      g_FVGSellPendingSL        = 0;
-      g_FVGSellPendingTP        = 0;
       g_AsianSellSLHit          = false;
       g_AsianSellReentered      = false;
       g_PendingsCancelledToday  = false;
@@ -1685,22 +1646,24 @@ bool TryFVGBuy()
       return ok;
    }
 
-   // RR < 1:2 → set pending 1:2 level for tick monitoring
-   // CheckFVGPendingEntry() will fire market entry when price drops to this level
-   double pending12 = (tp + 2.0 * sl) / 3.0;
-
-   if(pending12 <= sl || pending12 >= tp)
-   { PrintFormat("[FVG_Buy] SKIP: 1:2 entry level %.5f invalid", pending12); return false; }
-
-   // Only set if not already set
-   if(g_FVGBuyPending12 == 0)
+   // RR < 1.5 → setup quality too poor, skip
+   if(rrr < 1.5)
    {
-      g_FVGBuyPending12  = pending12;
-      g_FVGBuyPendingSL  = sl;
-      g_FVGBuyPendingTP  = tp;
-      PrintFormat("[FVG_Buy] RR %.2f < 1:2 — monitoring for 1:2 entry at %.5f on every tick", rrr, pending12);
+      PrintFormat("[FVG_Buy] SKIP: RR %.2f < 1.5 at current price — insufficient quality", rrr);
+      return false;
    }
-   return false;
+
+   // 1.5 <= RR < 1:2 → place BuyLimit at the price that gives exactly 1:2
+   // entry12 = (tp + 2*sl) / 3  →  gives reward:risk = 2.0 exactly
+   double entry12 = (tp + 2.0 * sl) / 3.0;
+
+   if(entry12 <= sl || entry12 >= ask)
+   { PrintFormat("[FVG_Buy] SKIP: 1:2 entry level %.5f invalid (sl=%.5f ask=%.5f)", entry12, sl, ask); return false; }
+
+   PrintFormat("[FVG_Buy] RR %.2f — placing BuyLimit at 1:2 entry %.5f (sl=%.5f tp=%.5f)", rrr, entry12, sl, tp);
+   bool ok = PlaceBuy(entry12, sl, tp, "FVG_Buy");
+   if(ok) g_FVGBuyDone = true;
+   return ok;
 }
 
 // Straight Buy (v1.32 rework)
@@ -1966,20 +1929,24 @@ bool TryFVGSell()
       return ok;
    }
 
-   // RR < 1:2 → set pending 1:2 level for tick monitoring
-   double pending12 = (tp + 2.0 * sl) / 3.0;
-
-   if(pending12 >= sl || pending12 <= tp)
-   { PrintFormat("[FVG_Sell] SKIP: 1:2 entry level %.5f invalid", pending12); return false; }
-
-   if(g_FVGSellPending12 == 0)
+   // RR < 1.5 → setup quality too poor, skip
+   if(rrr < 1.5)
    {
-      g_FVGSellPending12  = pending12;
-      g_FVGSellPendingSL  = sl;
-      g_FVGSellPendingTP  = tp;
-      PrintFormat("[FVG_Sell] RR %.2f < 1:2 — monitoring for 1:2 entry at %.5f on every tick", rrr, pending12);
+      PrintFormat("[FVG_Sell] SKIP: RR %.2f < 1.5 at current price — insufficient quality", rrr);
+      return false;
    }
-   return false;
+
+   // 1.5 <= RR < 1:2 → place SellLimit at the price that gives exactly 1:2
+   // entry12 = (tp + 2*sl) / 3  →  gives reward:risk = 2.0 exactly
+   double entry12 = (tp + 2.0 * sl) / 3.0;
+
+   if(entry12 >= sl || entry12 <= tp)
+   { PrintFormat("[FVG_Sell] SKIP: 1:2 entry level %.5f invalid (sl=%.5f tp=%.5f)", entry12, sl, tp); return false; }
+
+   PrintFormat("[FVG_Sell] RR %.2f — placing SellLimit at 1:2 entry %.5f (sl=%.5f tp=%.5f)", rrr, entry12, sl, tp);
+   bool ok = PlaceSell(entry12, sl, tp, "FVG_Sell");
+   if(ok) g_FVGSellDone = true;
+   return ok;
 }
 
 // Straight Sell (London + NY KZ — full window 02:00–10:00 ET)
