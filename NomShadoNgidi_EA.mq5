@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //|                       NomShadoNgidi_EA.mq5                       |
-//|            Expert Advisor — Nomshado Ngidi Trading Plan Q1 2025  |
-//|           Instrument: US_30 (US.30) ONLY  |  Version 1.08        |
+//|            Expert Advisor — Nomshado Ngidi Trading Plan          |
+//|           Instrument: US30 / US_30 / US.30  |  Version 1.38        |
 //+------------------------------------------------------------------+
 //
 //  ⚠ THIS EA WILL ONLY RUN ON US_30 (also accepted: US.30, US30)
@@ -11,24 +11,190 @@
 //  BUY  → FVG Asian Buy | FVG Buy | Straight Buy
 //  SELL → FVG Asian Sell | FVG Sell | Straight Sell
 //
-//  AUTOMATED FEATURES (v1.08):
-//  • Auto-Bias   — D1 trend direction derived from last 5 candles (no manual input)
-//  • News Filter — blocks all new trades on CPI, PPI and NFP windows (configurable buffer)
-//  • Risk %      — configurable InpRiskPercent (default 2%) replaces hardcoded balance/6
+//  v1.33 CHANGES (from v1.32):
+//  • Straight Buy / Sell window corrected:
+//    - Candles closing 05:00–09:00 ET are valid triggers
+//    - Last valid entry is at 10:00 open (09:00 candle close)
+//    - 10:00 candle close excluded (would result in 11:00 entry)
+//
+//  v1.32 CHANGES (from v1.31):
+//  • FVG Buy / FVG Sell: corrected FVG detection to match manual trading definition:
+//    - Bullish FVG: bar[1] BODY (open to close) is entirely above bar[2] HIGH
+//    - Bearish FVG: bar[1] BODY (open to close) is entirely below bar[2] LOW
+//    - No minimum gap size threshold
+//    - Asian Low break still required for FVG Buy
+//    - Asian High break still required for FVG Sell
+//    - Entry: market order immediately when bar[1] closes in FVG
+//    - SL: low of bar[2] minus buffer (buy) / high of bar[2] plus buffer (sell)
+//  • Fallback TP corrected from 3% of price to 3R from entry:
+//    - Buy:  TP = higher of (entry + 3×SLdistance) or Asian High
+//    - Sell: TP = lower  of (entry - 3×SLdistance) or Asian Low
+//    - Applies to all 4 setups: FVG Buy, FVG Sell, Straight Buy, Straight Sell
+//
+//  v1.31 CHANGES (from v1.30):
+//  • Break-even rule for any carried-over trade:
+//    - If a trade is still open on the NEXT trading day after it was opened
+//    - AND the trade is currently in profit → SL moved to entry (break even)
+//    - If trade is in a loss → SL stays at original level
+//    - CheckBreakEvenOvernight() called at start of every OnTick
+//
+//  v1.30 CHANGES (from v1.28):
+//  • News filter rework — new rule:
+//    - If CPI/PPI/NFP is scheduled today:
+//        Block ALL entries from midnight (00:00 ET) until news release time
+//        Allow entries again 30 minutes AFTER the release
+//    - If no news today: EA trades normally all day during kill zones
+//    - DST handled automatically (EA runs on Eastern Time throughout)
+//  • InpNewsMinsBefore removed — no longer needed (block starts at midnight)
+//  • InpNewsMinsAfter retained — controls how long after news entries are blocked
+//  • FVG Buy / FVG Sell: added fallback TP when no STH/STL found
+//    Buy:  TP = higher of (3% above entry) or Asian session High
+//    Sell: TP = lower  of (3% below entry) or Asian session Low
+//    Same rule applied to Straight Buy / Straight Sell
+//
+//  v1.28 CHANGES (from v1.27):
+//  • FVG Asian Buy / Sell: full rework
+//    - Entry only at 01:00 ET (candle after Asian session closes at 00:00)
+//    - Daily filter: D1 bar[1] must show a reversal candle BEFORE entry:
+//        Buy  → lower wick breaks below D1 bar[2] low  OR bullish engulfing
+//        Sell → upper wick breaks above D1 bar[2] high OR bearish engulfing
+//    - SL: Asian session High (sell) or Low (buy) — not H1 bar[1] wick
+//    - TP: scan D1 bars from bar[2] backwards; find first bar whose
+//        high (buy) is below reversal candle's low, OR
+//        low  (sell) is above reversal candle's high
+//      Keep scanning indefinitely until a valid level is found
+//  • Added helper: GetD1ReversalTP() for buy and sell
+//  • Added helper: HasD1BullishReversal() and HasD1BearishReversal()
+//
+//  v1.27 CHANGES (from v1.26):
+//  • PlaceBuy / PlaceSell: removed 1:2 TP lock — TP now always goes to the
+//    actual STH (buys) or STL (sells) level as identified by GetSTHigh/GetSTLow
+//  • Minimum RRR check (>= 1.5) retained — trades with RRR below 1.5 still skipped
+//  • RRR in journal/alerts now reflects true planned RR to the STH/STL
+//
+//  v1.26 CHANGES (from v1.25):
+//  • Removed minimum SL distance filter — lot size adjusts to margin instead
+//  • CalcLotSize margin cap retained: lots scaled down to max affordable
+//
+//  v1.25 CHANGES (from v1.24):
+//  • CalcLotSize: added margin cap — lots reduced to max affordable based on
+//    free margin (handles BlackBull 1:100 effective margin on indices)
+//  • PlaceBuy / PlaceSell: added minimum SL distance of 30 price points
+//    Prevents doji candle wicks generating 30-40+ lot calculations
+//
+//  v1.24 CHANGES (from v1.23):
+//  • CalcLotSize: fixed formula to include g_PipSize
+//    Correct: lots = risk / (slPips × g_PipSize × contractSize)
+//    This fixes BlackBull US30 where g_PipSize=0.1 was causing
+//    lots to be calculated 10x too small, then rounded up to minimum
+//  NOTE: Starting balance of $50 is too small for BlackBull US30.
+//    Minimum viable balance ≈ $200 (margin per 0.1 lot ≈ $49 at current prices)
+//
+//  v1.23 CHANGES (from v1.22):
+//  • Risk model restored to balance/6 (hardcoded per trading plan)
+//    InpRiskPercent input removed — not configurable
+//
+//  v1.22 CHANGES (from v1.21):
+//  • CalcLotSize: replaced hardcoded /10 with SYMBOL_TRADE_CONTRACT_SIZE
+//    - AvaTrade US_30:  contract size = 10 → lots = risk / (slPips × 10)
+//    - BlackBull US30:  contract size = 1  → lots = risk / (slPips × 1)
+//    - FTMO and others: auto-detected — no manual adjustment needed
+//  • Symbol check updated to accept US30 (BlackBull label)
+//
+//  v1.21 CHANGES (from v1.20):
+//  • All-bullish Asian session TP override added to TryStraightSell and TryFVGSell:
+//    if g_AllAsianBullish == true → TP is overridden to g_AsianLow
+//    (fade the bullish session, target the bottom of Asian range)
+//    Normal TP logic (STH/STL 1.5 RR → lock at 1:2) applies otherwise
+//
+//  v1.20 CHANGES (from v1.19):
+//  • TP logic changed for all 4 setup types:
+//    - If STH/STL gives RRR >= 1.5 → TP locked at exactly 1:2 RR
+//    - If STH/STL gives RRR <  1.5 → trade skipped entirely
+//    - If no STH/STL found → fallback TP set at 1:2 RR (was 1:3)
+//  • InpMinRRR parameter now unused (logic hardcoded at 1.5 threshold / 1:2 target)
+//
+//  v1.19 CHANGES (from v1.18):
+//  • FVG Asian Buy and FVG Asian Sell setups REMOVED entirely
+//    Active setups: FVG Buy, FVG Sell, Straight Buy, Straight Sell
+//
+//  v1.18 FIXES — SL placement refinement (from v1.17):
+//  • Straight Buy  SL: MathMax(iLow(bar[1]), iLow(bar[2]))  - buffer
+//    (highest of two previous lows — tighter stop closer to entry)
+//  • Straight Sell SL: MathMin(iHigh(bar[1]), iHigh(bar[2])) + buffer
+//    (lowest of two previous highs — tighter stop closer to entry)
+//  • FVG Buy/Sell SL unchanged: bar[1] wick only
+//
+//  v1.17 FIXES — SL placement (from v1.16):
+//  • ALL setup types: SL now placed at wick of previous candle (bar[1])
+//    BUY  SL = iLow(bar[1])  - buffer
+//    SELL SL = iHigh(bar[1]) + buffer
+//  • Replaces all previous SL logic (Asian Low/High, GetSTLowForSL, GetSTHighForSL)
+//
+//  v1.16 FIXES (from v1.15):
+//  • SELL SL: reverted from Asian High back to GetSTHighForSL (nearest swing
+//    high above entry). Charts show sell SL = sweep candle high, not Asian High.
+//    Logic is ASYMMETRIC by design:
+//    BUY  SL = Asian Low - buffer   (the swept low is the reference)
+//    SELL SL = nearest swing high above entry + buffer (the sweep candle high)
+//  • Removed "entry must be below Asian High" check from TryStraightSell —
+//    valid sells can fire when price is still above Asian High after the sweep
+//
+//  v1.15 CHANGES — Manual journal alignment (from v1.14):
+//  • Risk model: changed from balance/6 (16.7%) to InpRiskPercent% (default 1%)
+//    Manual journal shows all losses = exactly -1% → confirms 1% risk per trade
+//  • SL placement: ALL setups now use Asian Low (buys) or Asian High (sells)
+//    Manual charts show pink SL zone sits at Asian session range boundary,
+//    NOT at nearest H1 swing low/high as previously coded
+//  • These two changes are the primary reason EA results diverged from manual journal
+//
+//  v1.14 CHANGES (from v1.12):
+//  • Fallback 1:3 RR TP RESTORED in TryStraightBuy and TryStraightSell
+//    — confirmed intentional per manual trading plan: if price is at chart
+//      extreme with no visible STH/STL, use 1:3 RR as take profit target
+//  • v1.13 pullback filters (IsBullishCandle/MostlyBearishPrior) NOT included
+//    — those were overly restrictive and blocked all trades
+//
+//  v1.12 FIXES retained:
+//  • Trading end boundary: hr < InpTradingEndNY (was <=) — 5 locations
+//  • TryStraightBuy: entry must be >= Asian Low
+//  • TryStraightSell: entry must be <= Asian High
+//
+//  v1.12 FIXES (applied to v1.11 (7)):
+//  • Bug 1 (CRITICAL): Trading end boundary — ALL hr <= InpTradingEndNY changed
+//    to hr < InpTradingEndNY. Affects IsInTradingWindow, ScanBuySetups (x2),
+//    ScanSellSetups (x2). Prevents trades firing at the 10:00 bar open.
+//  • Bug 2: TryStraightBuy — entry must be >= Asian Low. Asian Low sweep means
+//    price must return ABOVE Asian Low before a buy is valid.
+//  • Bug 3: TryStraightSell — entry must be <= Asian High. Symmetric to above.
+//  • Bug 4: Fallback 1:3 TP removed from TryStraightBuy and TryStraightSell.
+//    Both now SKIP if no valid STH/STL is found — no unstructured targets.
+//
+//  v1.08 CHANGES (to match manual backtest journal):
+//  • AutoBias D1 filter REMOVED — was blocking valid trades
+//  • IsDailyBullishReversal / IsDailyBearishReversal REMOVED — same
+//  • GetSTHigh: now finds true H1 swing high (3-bar pattern); no longer
+//    requires level to be above the Asian session high
+//  • GetSTLow:  now finds true H1 swing low  (3-bar pattern); no longer
+//    requires level to be below the Asian session low
+//  • TryStraightBuy:  fires across full London+NY window (02:00–10:00 ET),
+//    not locked to 6AM only; simplified trigger
+//  • TryStraightSell: same window fix
+//  • TryFVGBuy:  HasDownsideViolation check relaxed — fires if FVG present
+//  • TryFVGSell: HasUpsideViolation  check relaxed — fires if FVG present
 //
 //  HOW TO INSTALL:
 //  1. Copy this file to: MT5 → File → Open Data Folder → MQL5 → Experts
 //  2. Restart MetaTrader 5 (or press F5 in MetaEditor)
-//  3. Drag the EA onto your US_30 H1 chart (ONLY instrument supported)
+//  3. Drag the EA onto your US_30 H1 chart
 //  4. Ensure "Allow Algo Trading" is enabled in MT5
-//  5. Configure input parameters to match your account/timezone
 //
 //+------------------------------------------------------------------+
 #property copyright   "Nomshado Ngidi"
-#property version     "1.08"
-#property description "MT5 EA — Nomshado Ngidi Trading Plan Q1 2025"
-#property description "⚠ Instrument: US_30 (US.30) ONLY — will refuse all other symbols"
-#property description "Setups: FVG Buy/Sell, Asian FVG, Straight"
+#property version     "1.49"
+#property description "MT5 EA — Nomshado Ngidi Trading Plan v1.49"
+#property description "⚠ Instrument: US30 / US_30 / US.30 ONLY"
+#property description "Setups: FVG Buy/Sell, Asian FVG, Straight Buy/Sell"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
@@ -41,18 +207,14 @@
 enum ENUM_EXEC_MODE
 {
    EXEC_AUTO   = 0,  // Auto — market if within 2 pips of ask/bid, else limit/stop pending
-   EXEC_MARKET = 1,  // Always market execution (instant fill at current price)
-   EXEC_LIMIT  = 2   // Always pending order (BuyLimit/BuyStop or SellLimit/SellStop)
+   EXEC_MARKET = 1,  // Always market execution
+   EXEC_LIMIT  = 2   // Always pending order
 };
 
 //============================================================
 //  INPUT PARAMETERS
 //============================================================
 
-// All session hours are in Eastern Time (ET) — DST is handled automatically.
-//   • EST (UTC-5): first Sunday of November → second Sunday of March
-//   • EDT (UTC-4): second Sunday of March   → first Sunday of November
-// Uses TimeGMT() so broker server timezone is completely irrelevant.
 input group "=== Session Times (Eastern Time — auto DST) ==="
 input int    InpAsianStartNY          = 19;  // Asian Session Start — NY time (plan: 19:00)
 input int    InpAsianEndNY            = 0;   // Asian Session End   — NY time (plan: 00:00)
@@ -62,33 +224,33 @@ input int    InpNYKillZoneNY          = 5;   // NY Kill Zone Start — NY time (
 input int    InpTradingEndNY          = 10;  // Trading Window End — NY time (plan: 10:00)
 
 input group "=== Risk Management ==="
-input double InpMinRRR         = 2.0;  // Minimum Risk:Reward Ratio (1:2 per plan)
-input double InpRiskPercent    = 2.0;  // Risk per trade as % of balance (default 2% — do NOT exceed 5%)
+// Risk per trade = balance / 6 (hardcoded per trading plan)
+input double InpMinRRR         = 2.0;  // Minimum Risk:Reward Ratio (1:2)
 
 input group "=== Stop Loss Settings ==="
-input int    InpFVGBuffer      = 10;   // SL/entry buffer in pips (10 = breathing room)
+input int    InpFVGBuffer      = 5;    // SL/entry buffer in pips
 
 input group "=== Trade Settings ==="
-input ENUM_EXEC_MODE InpExecMode = EXEC_AUTO; // Execution mode: Auto | Market | Limit/Pending
-input int    InpMaxDailyTrades = 2;    // Max trades per day (plan: max 2)
-input bool   InpAllowMonday    = false;// Allow Monday trading (plan: NO)
-input int    InpPendingCancelHour = 11; // Cancel unfilled limit orders at this NY hour (plan: 11)
-input int    InpSTH_Lookback   = 20;   // Short-term High/Low lookback (H1 bars)
-input int    InpMagicNumber    = 20250101; // EA Magic Number
-input double InpD1ReversalBodyRatio = 0.5; // FVG Asian: min D1 reversal body/range ratio (0–1)
+input ENUM_EXEC_MODE InpExecMode      = EXEC_AUTO;
+input int    InpMaxDailyTrades        = 1;
+input bool   InpAllowMonday           = false;
+input int    InpPendingCancelHour     = 11;
+input int    InpSTH_Lookback          = 20;  // H1 bars to look back for swing high/low
+input int    InpMagicNumber           = 20250101;
+input double InpD1ReversalBodyRatio   = 0.5; // kept for FVG Asian only (optional)
 
 input group "=== News Filter (CPI / PPI / NFP) ==="
-input bool   InpNewsFilter        = true;   // Block trading on CPI / PPI / NFP days
-input int    InpNewsMinsBefore    = 60;     // Minutes to stop trading BEFORE news
-input int    InpNewsMinsAfter     = 30;     // Minutes to resume trading AFTER news
+input bool   InpNewsFilter        = true;
+// v1.30: no entries from midnight until news release time
+// InpNewsMinsAfter controls how long AFTER the release entries remain blocked
+input int    InpNewsMinsAfter     = 30;  // Minutes to wait after news before trading again
 
 input group "=== Alerts ==="
-input bool   InpPopupAlerts    = true;                           // Enable popup alerts on new setup
-input bool   InpPushAlerts     = false;                          // Enable push notifications
-input bool   InpEmailAlerts    = true;                           // Enable email alerts for balance milestones
-input string InpAlertEmail     = "solutionsphanaso@gmail.com";   // ⚠ Configure in MT5 Tools→Options→Email→To
-input double InpBalanceLowAlert = 100.0;                         // Email alert: balance drops to or below ($)
-// Milestone alerts fire once each when balance first crosses: $1,000 | $5,000 | $10,000 | $50,000 | $100,000 | $500,000 | $1,000,000
+input bool   InpPopupAlerts    = true;
+input bool   InpPushAlerts     = false;
+input bool   InpEmailAlerts    = true;
+input string InpAlertEmail     = "solutionsphanaso@gmail.com";
+input double InpBalanceLowAlert = 100.0;
 
 //============================================================
 //  GLOBAL VARIABLES
@@ -101,17 +263,15 @@ int      g_DailyCount   = 0;
 datetime g_LastDay      = 0;
 double   g_PipSize      = 0;
 
-// Asian session data (refreshed each new day)
 double   g_AsianHigh        = 0;
 double   g_AsianLow         = 0;
 bool     g_AsianFVGBullish  = false;
+bool     g_AllAsianBullish  = false;  // v1.21: true if all Asian session candles were bullish
 bool     g_AsianFVGBearish  = false;
-bool     g_AllAsianBullish  = false;
 bool     g_AllAsianBearish  = false;
 int      g_AsianLastBar     = -1;
 datetime g_AsianDate        = 0;
 
-// Balance alert flags (lifetime — not reset daily)
 bool     g_BalanceLowAlertSent = false;
 bool     g_Milestone1k         = false;
 bool     g_Milestone5k         = false;
@@ -121,16 +281,22 @@ bool     g_Milestone100k       = false;
 bool     g_Milestone500k       = false;
 bool     g_Milestone1m         = false;
 
-// Per-day setup guards
 bool     g_FVGBuyDone              = false;
 bool     g_StraightBuyDone         = false;
 bool     g_FVGSellDone             = false;
 bool     g_StraightSellDone        = false;
+
+// v1.47: Pending FVG 1:2 entry levels — checked on every tick
+double   g_FVGBuyPending12         = 0;  // price at which FVG Buy gets 1:2 RR
+double   g_FVGBuyPendingSL         = 0;
+double   g_FVGBuyPendingTP         = 0;
+double   g_FVGSellPending12        = 0;  // price at which FVG Sell gets 1:2 RR
+double   g_FVGSellPendingSL        = 0;
+double   g_FVGSellPendingTP        = 0;
 bool     g_AsianSellSLHit          = false;
 bool     g_AsianSellReentered      = false;
-bool     g_PendingsCancelledToday  = false;  // true once limit orders swept at InpPendingCancelHour
+bool     g_PendingsCancelledToday  = false;
 
-// Bar tracker — EA only acts on newly opened H1 bars
 datetime g_LastBar = 0;
 
 //============================================================
@@ -141,9 +307,7 @@ int OnInit()
 {
    if(StringFind(_Symbol, "US.30") < 0 && StringFind(_Symbol, "US30") < 0 && StringFind(_Symbol, "US_30") < 0)
    {
-      string errMsg = "WRONG SYMBOL: This EA trades US.30 only. "
-                      "Current chart is " + _Symbol + ". "
-                      "Attach the EA to a US.30 / US_30 chart and retry.";
+      string errMsg = "WRONG SYMBOL: This EA trades US.30 only. Current chart is " + _Symbol;
       Alert(errMsg);
       Print(errMsg);
       return INIT_FAILED;
@@ -156,20 +320,32 @@ int OnInit()
    trade.SetDeviationInPoints(20);
    trade.SetTypeFilling(ORDER_FILLING_FOK);
 
-   PrintFormat("=== Nomshado Ngidi EA v1.08 Initialised ===");
+   PrintFormat("=== Nomshado Ngidi EA v1.49 Initialised ===");
    PrintFormat("Symbol: %s | Pip Size: %.5f", _Symbol, g_PipSize);
-   PrintFormat("Risk per trade: %.1f%% of balance | Min RRR 1:%.1f", InpRiskPercent, InpMinRRR);
-   PrintFormat("Asian NY: %02d:00-%02d:00 | London KZ: %02d:00 | NY KZ: %02d:00-%02d:00",
-               InpAsianStartNY, InpAsianEndNY, InpLondonStartNY, InpNYKillZoneNY, InpTradingEndNY);
+   PrintFormat("Risk per trade: Balance / 6 (%.2f%%) | Min RRR 1:%.1f", 100.0/6.0, InpMinRRR);
+   PrintFormat("London KZ: %02d:00 | NY KZ: %02d:00–%02d:00",
+               InpLondonStartNY, InpNYKillZoneNY, InpTradingEndNY);
    PrintFormat("Time base: Eastern Time (auto DST) — %s (UTC%d) | Max daily trades: %d",
                EasternOffset() == -4 ? "EDT" : "EST", EasternOffset(), InpMaxDailyTrades);
    if(!InpAllowMonday)
       Print("Monday filter: ACTIVE");
    if(InpNewsFilter)
-      PrintFormat("News filter: ACTIVE — CPI/PPI/NFP blocked (%dm before / %dm after)",
-                  InpNewsMinsBefore, InpNewsMinsAfter);
+      PrintFormat("News filter: ACTIVE — CPI/PPI/NFP blocks entries from midnight until release + %dm after",
+                  InpNewsMinsAfter);
 
    g_LastBar = iTime(_Symbol, PERIOD_H1, 0);
+
+   // v1.47: Immediately scan for existing FVGs on init — don't wait for next bar close
+   // This ensures pending 1:2 levels are set even if EA is restarted mid-session
+   ResetDailyCount();
+   AnalyseAsianSession();
+   if(IsInTradingWindow() && !IsHighImpactNewsWindow() &&
+      g_DailyCount == 0 && !BothAsianLevelsBroken())
+   {
+      Print("[Init] Scanning for existing FVGs on startup...");
+      if(!ScanBuySetups()) ScanSellSetups();
+   }
+
    return INIT_SUCCEEDED;
 }
 
@@ -190,7 +366,6 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
 
    ulong dealTicket = trans.deal;
    if(!HistoryDealSelect(dealTicket)) return;
-
    if(HistoryDealGetInteger(dealTicket, DEAL_MAGIC)  != InpMagicNumber) return;
    if(HistoryDealGetString (dealTicket, DEAL_SYMBOL) != _Symbol)        return;
    if(HistoryDealGetInteger(dealTicket, DEAL_ENTRY)  != DEAL_ENTRY_OUT) return;
@@ -209,10 +384,7 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
    {
       ulong d = HistoryDealGetTicket(i);
       if(HistoryDealGetInteger(d, DEAL_ENTRY) == DEAL_ENTRY_IN)
-      {
-         entryPrice = HistoryDealGetDouble(d, DEAL_PRICE);
-         break;
-      }
+      { entryPrice = HistoryDealGetDouble(d, DEAL_PRICE); break; }
    }
    if(entryPrice <= 0) return;
 
@@ -221,10 +393,7 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
    {
       ulong ord = HistoryOrderGetTicket(i);
       if((ulong)HistoryOrderGetInteger(ord, ORDER_POSITION_ID) == positionId)
-      {
-         slPrice = HistoryOrderGetDouble(ord, ORDER_SL);
-         tpPrice = HistoryOrderGetDouble(ord, ORDER_TP);
-      }
+      { slPrice = HistoryOrderGetDouble(ord, ORDER_SL); tpPrice = HistoryOrderGetDouble(ord, ORDER_TP); }
    }
 
    double plannedRR = 0, actualRR = 0;
@@ -262,11 +431,10 @@ void FireMilestone(bool &flag, string milestone, double balance, string acct, st
       "BALANCE MILESTONE — NomShadoNgidi EA\n\n"
       "Congratulations! Your balance has crossed %s.\n"
       "Current balance : $%.2f\n"
-      "Milestone       : %s\n"
       "Account         : %s\n"
       "Symbol          : %s\n"
       "Time            : %s",
-      milestone, balance, milestone, acct, _Symbol, ts);
+      milestone, balance, acct, _Symbol, ts);
    Print(subj);
    SendMail(subj, body);
    if(InpPopupAlerts) Alert(subj);
@@ -282,15 +450,14 @@ void CheckBalanceAlerts()
 
    if(!g_BalanceLowAlertSent && balance <= InpBalanceLowAlert)
    {
-      string subj = StringFormat("⚠ LOW BALANCE on %s — $%.2f", _Symbol, balance);
+      string subj = StringFormat("LOW BALANCE on %s — $%.2f", _Symbol, balance);
       string body = StringFormat(
          "BALANCE ALERT — NomShadoNgidi EA\n\n"
          "Your account balance has dropped to $%.2f.\n"
          "Alert threshold : $%.2f\n"
          "Account         : %s\n"
          "Symbol          : %s\n"
-         "Time            : %s\n\n"
-         "Please review your account immediately.",
+         "Time            : %s",
          balance, InpBalanceLowAlert, acct, _Symbol, ts);
       Print(subj);
       if(InpEmailAlerts) SendMail(subj, body);
@@ -311,7 +478,7 @@ void CheckBalanceAlerts()
 }
 
 //============================================================
-//  PENDING ORDER CLEANUP — cancel all unfilled limit/stop orders at InpPendingCancelHour
+//  PENDING ORDER CLEANUP
 //============================================================
 
 void CancelPendingOrders()
@@ -321,38 +488,162 @@ void CancelPendingOrders()
    {
       ulong ticket = OrderGetTicket(i);
       if(ticket == 0) continue;
-      if(OrderGetString(ORDER_SYMBOL)  != _Symbol)                 continue;
-      if((int)OrderGetInteger(ORDER_MAGIC) != InpMagicNumber)      continue;
+      if(OrderGetString(ORDER_SYMBOL)           != _Symbol)       continue;
+      if((int)OrderGetInteger(ORDER_MAGIC)      != InpMagicNumber) continue;
 
       ENUM_ORDER_TYPE otype = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
-      if(otype != ORDER_TYPE_BUY_LIMIT  &&
-         otype != ORDER_TYPE_SELL_LIMIT &&
-         otype != ORDER_TYPE_BUY_STOP   &&
-         otype != ORDER_TYPE_SELL_STOP) continue;
+      if(otype != ORDER_TYPE_BUY_LIMIT  && otype != ORDER_TYPE_SELL_LIMIT &&
+         otype != ORDER_TYPE_BUY_STOP   && otype != ORDER_TYPE_SELL_STOP) continue;
 
-      if(trade.OrderDelete(ticket))
-         cancelled++;
-      else
-         PrintFormat("[CancelPending] FAILED ticket #%I64u — error %d", ticket, GetLastError());
+      if(trade.OrderDelete(ticket)) cancelled++;
+      else PrintFormat("[CancelPending] FAILED ticket #%I64u — error %d", ticket, GetLastError());
    }
-
    g_PendingsCancelledToday = true;
-
    if(cancelled > 0)
       PrintFormat("[CancelPending] Cancelled %d pending order(s) at %02d:00 ET", cancelled, InpPendingCancelHour);
-   else
-      PrintFormat("[CancelPending] No pending orders found at %02d:00 ET", InpPendingCancelHour);
+}
+
+// CheckBreakEvenOvernight (v1.31)
+// If any open trade was opened on a PREVIOUS trading day AND is currently
+// in profit → move SL to entry price (break even)
+// If in a loss → leave SL unchanged
+// CheckStraightBreakEven — v1.45
+// For Straight Buy/Sell trades: when price reaches 1.5R → move SL to entry
+void CheckStraightBreakEven()
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(!PositionSelectByTicket(ticket))              continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+
+      string comment = PositionGetString(POSITION_COMMENT);
+      if(StringFind(comment, "Straight_Buy") < 0 && StringFind(comment, "Straight_Sell") < 0) continue;
+
+      double entry    = PositionGetDouble(POSITION_PRICE_OPEN);
+      double sl       = PositionGetDouble(POSITION_SL);
+      double tp       = PositionGetDouble(POSITION_TP);
+      long   posType  = PositionGetInteger(POSITION_TYPE);
+      double bid      = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      double ask      = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+
+      // Already at break even
+      if(MathAbs(sl - entry) < g_PipSize) continue;
+
+      double risk     = MathAbs(entry - sl);
+      double trigger  = 0;
+
+      if(posType == POSITION_TYPE_BUY)
+         trigger = entry + 1.5 * risk;   // 1.5R above entry
+      else
+         trigger = entry - 1.5 * risk;   // 1.5R below entry
+
+      bool triggered = (posType == POSITION_TYPE_BUY)  ? (bid >= trigger) :
+                       (posType == POSITION_TYPE_SELL) ? (ask <= trigger) : false;
+
+      if(triggered)
+      {
+         if(trade.PositionModify(ticket, entry, tp))
+            PrintFormat("[StraightBE] Ticket #%I64u — price reached 1.5R (%.5f) → SL moved to entry %.5f",
+                        ticket, trigger, entry);
+         else
+            PrintFormat("[StraightBE] FAILED to modify ticket #%I64u — error %d",
+                        ticket, GetLastError());
+      }
+   }
+}
+
+void CheckBreakEvenOvernight()
+{
+   datetime todayMidnight = TodayMidnight();
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(!PositionSelectByTicket(ticket))           continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+
+      datetime openTime  = (datetime)PositionGetInteger(POSITION_TIME);
+      double   entryPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+      double   currentSL  = PositionGetDouble(POSITION_SL);
+      double   currentTP  = PositionGetDouble(POSITION_TP);
+      long     posType    = PositionGetInteger(POSITION_TYPE);
+
+      // Only act if trade was opened BEFORE today
+      if(openTime >= todayMidnight) continue;
+
+      // Check if already at break even (avoid unnecessary modify)
+      if(MathAbs(currentSL - entryPrice) < g_PipSize) continue;
+
+      // Check if trade is in profit
+      double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      bool inProfit = (posType == POSITION_TYPE_BUY)  ? (bid > entryPrice) :
+                      (posType == POSITION_TYPE_SELL) ? (ask < entryPrice) : false;
+
+      if(!inProfit)
+      {
+         PrintFormat("[BreakEven] Ticket #%I64u opened %s — in LOSS, SL unchanged at %.5f",
+                     ticket, TimeToString(openTime, TIME_DATE), currentSL);
+         continue;
+      }
+
+      // Move SL to entry
+      if(trade.PositionModify(ticket, entryPrice, currentTP))
+         PrintFormat("[BreakEven] Ticket #%I64u opened %s — in profit, SL moved to entry %.5f",
+                     ticket, TimeToString(openTime, TIME_DATE), entryPrice);
+      else
+         PrintFormat("[BreakEven] FAILED to modify ticket #%I64u — error %d",
+                     ticket, GetLastError());
+   }
 }
 
 //============================================================
-//  MAIN TICK — only acts on newly opened H1 bar
+//  MAIN TICK
 //============================================================
+
+// CheckFVGPendingEntry — v1.47
+// Called on EVERY TICK — fires market entry if price reaches the 1:2 level
+// during the fill candle (before bar close)
+void CheckFVGPendingEntry()
+{
+   if(g_FVGBuyDone || g_StraightBuyDone || g_FVGSellDone || g_StraightSellDone) return;
+   if(g_DailyCount >= InpMaxDailyTrades) return;
+
+   // FVG Buy pending — price dropped to 1:2 entry level
+   if(g_FVGBuyPending12 > 0)
+   {
+      double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      if(ask <= g_FVGBuyPending12)
+      {
+         PrintFormat("[FVG_Buy] Price %.5f reached 1:2 entry level %.5f → market entry!", ask, g_FVGBuyPending12);
+         bool ok = PlaceBuy(ask, g_FVGBuyPendingSL, g_FVGBuyPendingTP, "FVG_Buy");
+         if(ok) { g_FVGBuyDone = true; g_FVGBuyPending12 = 0; }
+      }
+   }
+
+   // FVG Sell pending — price rose to 1:2 entry level
+   if(g_FVGSellPending12 > 0)
+   {
+      double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      if(bid >= g_FVGSellPending12)
+      {
+         PrintFormat("[FVG_Sell] Price %.5f reached 1:2 entry level %.5f → market entry!", bid, g_FVGSellPending12);
+         bool ok = PlaceSell(bid, g_FVGSellPendingSL, g_FVGSellPendingTP, "FVG_Sell");
+         if(ok) { g_FVGSellDone = true; g_FVGSellPending12 = 0; }
+      }
+   }
+}
 
 void OnTick()
 {
+   CheckBreakEvenOvernight();
+   CheckStraightBreakEven();
    CheckBalanceAlerts();
 
-   // Cancel all unfilled limit/stop orders at InpPendingCancelHour (default 11am ET)
+   // v1.47: Check on EVERY TICK if price has reached the pending FVG 1:2 level
+   CheckFVGPendingEntry();
+
    if(!g_PendingsCancelledToday && CurrentHour() >= InpPendingCancelHour)
       CancelPendingOrders();
 
@@ -363,12 +654,16 @@ void OnTick()
    ResetDailyCount();
    CheckAsianSellSLReentry();
 
-   if(!InpAllowMonday && IsMonday())     return;
-   if(g_DailyCount >= InpMaxDailyTrades) return;
-   if(!IsInTradingWindow())              return;
-   if(IsHighImpactNewsWindow())          return;
+   if(!InpAllowMonday && IsMonday())      return;
+   if(g_DailyCount >= InpMaxDailyTrades)  return;
+   if(!IsInTradingWindow())               return;
+   if(IsHighImpactNewsWindow())           return;
 
    AnalyseAsianSession();
+
+   // v1.42: If both Asian High AND Low broken on separate bars AND no trade fired yet → no trade all day
+   if(g_DailyCount == 0 && BothAsianLevelsBroken())
+   { Print("[FILTER] Both Asian High AND Low broken → no trade today"); return; }
 
    if(g_AsianSellSLHit && !g_AsianSellReentered)
    {
@@ -380,17 +675,39 @@ void OnTick()
       ScanSellSetups();
 }
 
+// BothAsianLevelsBroken — v1.42
+// Returns true if BOTH Asian High AND Low have been broken on separate bars today
+// If true → no trade should be fired for the rest of the day
+bool BothAsianLevelsBroken()
+{
+   if(g_AsianHigh <= 0 || g_AsianLow <= 0) return false;
+
+   bool highBroken = false;
+   bool lowBroken  = false;
+   datetime todayMid = TodayMidnight();
+   int totalBars = iBars(_Symbol, PERIOD_H1);
+
+   for(int i = 1; i < totalBars; i++)
+   {
+      datetime barTime = BarTimeNY(i);
+      MqlDateTime bDt;
+      TimeToStruct(barTime, bDt);
+      datetime barDay = barTime - bDt.hour * 3600 - bDt.min * 60 - bDt.sec;
+      if(barDay < todayMid) break;
+      if(bDt.hour < 1) continue;
+
+      if(iHigh(_Symbol, PERIOD_H1, i) > g_AsianHigh) highBroken = true;
+      if(iLow (_Symbol, PERIOD_H1, i) < g_AsianLow)  lowBroken  = true;
+
+      if(highBroken && lowBroken) return true;
+   }
+   return false;
+}
+
 //============================================================
 //  TIME HELPERS — Eastern Time with automatic US DST
-//
-//  ALL time calculations use TimeGMT() directly.
-//  Broker server timezone is NEVER used for trading decisions.
-//  BarTimeNY() is only used in AnalyseAsianSession to identify
-//  which historical bars fall in the Asian session window.
-//  All trigger/window checks use CurrentHour() exclusively.
 //============================================================
 
-// Day-of-week (Tomohiko Sakamoto). 0=Sun … 6=Sat.
 int DayOfWeekFor(int year, int mon, int day)
 {
    static int t[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
@@ -398,24 +715,20 @@ int DayOfWeekFor(int year, int mon, int day)
    return (year + year/4 - year/100 + year/400 + t[mon-1] + day) % 7;
 }
 
-// Returns Eastern UTC offset: -4 (EDT/summer) or -5 (EST/winter).
-// DST starts: 2nd Sunday of March  at 07:00 UTC (2:00 AM EST → springs to 3 AM)
-// DST ends  : 1st Sunday of November at 06:00 UTC (2:00 AM EDT → falls to 1 AM)
 int EasternOffset()
 {
    MqlDateTime u;
    TimeToStruct(TimeGMT(), u);
 
    int dowMar1   = DayOfWeekFor(u.year, 3, 1);
-   int marchSun2 = 1 + (7 - dowMar1) % 7 + 7;   // 2nd Sunday of March (day 8–14)
+   int marchSun2 = 1 + (7 - dowMar1) % 7 + 7;
 
    int dowNov1   = DayOfWeekFor(u.year, 11, 1);
-   int novSun1   = 1 + (7 - dowNov1) % 7;        // 1st Sunday of November (day 1–7)
+   int novSun1   = 1 + (7 - dowNov1) % 7;
 
    bool pastStart = (u.mon >  3) ||
                     (u.mon == 3 && u.day >  marchSun2) ||
                     (u.mon == 3 && u.day == marchSun2 && u.hour >= 7);
-
    bool beforeEnd = (u.mon <  11) ||
                     (u.mon == 11 && u.day <  novSun1) ||
                     (u.mon == 11 && u.day == novSun1 && u.hour < 6);
@@ -423,10 +736,8 @@ int EasternOffset()
    return (pastStart && beforeEnd) ? -4 : -5;
 }
 
-// Current Eastern Time (auto DST), derived purely from UTC
-datetime NowNY() { return TimeGMT() + EasternOffset() * 3600; }
+datetime NowNY()    { return TimeGMT() + EasternOffset() * 3600; }
 
-// Current Eastern hour — used for ALL trading window and trigger decisions
 int CurrentHour()
 {
    MqlDateTime dt;
@@ -441,10 +752,11 @@ bool IsMonday()
    return dt.day_of_week == 1;
 }
 
+// Trading window: London KZ start through end of NY KZ (02:00–10:00 ET)
 bool IsInTradingWindow()
 {
    int h = CurrentHour();
-   return (h >= InpFVGAsianWindowStartNY && h <= InpTradingEndNY);
+   return (h >= InpLondonStartNY && h < InpTradingEndNY);
 }
 
 datetime TodayMidnight()
@@ -455,32 +767,32 @@ datetime TodayMidnight()
    return StructToTime(dt);
 }
 
-// Convert a broker-server-time bar open timestamp to Eastern Time.
-// Used ONLY in AnalyseAsianSession to locate historical Asian session bars.
-// NOT used for any trading trigger or window decision.
 datetime BarTimeNY(int barIndex)
 {
    int serverOffsetSecs = (int)((datetime)TimeCurrent() - (datetime)TimeGMT());
    return iTime(_Symbol, PERIOD_H1, barIndex) - serverOffsetSecs + EasternOffset() * 3600;
 }
 
-// NYtoServer is an identity — session inputs are in Eastern Time, CurrentHour() is also Eastern.
-int NYtoServer(int nyHour) { return nyHour; }
-
 void ResetDailyCount()
 {
    datetime today = TodayMidnight();
    if(today != g_LastDay)
    {
-      g_DailyCount               = 0;
-      g_LastDay                  = today;
-      g_FVGBuyDone               = false;
-      g_StraightBuyDone          = false;
-      g_FVGSellDone              = false;
-      g_StraightSellDone         = false;
-      g_AsianSellSLHit           = false;
-      g_AsianSellReentered       = false;
-      g_PendingsCancelledToday   = false;
+      g_DailyCount              = 0;
+      g_LastDay                 = today;
+      g_FVGBuyDone              = false;
+      g_StraightBuyDone         = false;
+      g_FVGSellDone             = false;
+      g_StraightSellDone        = false;
+      g_FVGBuyPending12         = 0;
+      g_FVGBuyPendingSL         = 0;
+      g_FVGBuyPendingTP         = 0;
+      g_FVGSellPending12        = 0;
+      g_FVGSellPendingSL        = 0;
+      g_FVGSellPendingTP        = 0;
+      g_AsianSellSLHit          = false;
+      g_AsianSellReentered      = false;
+      g_PendingsCancelledToday  = false;
    }
 }
 
@@ -490,31 +802,55 @@ double PriceToPips(double dist) { return (g_PipSize > 0) ? dist / g_PipSize : 0;
 double CalcLotSize(double slPips)
 {
    if(slPips <= 0) return 0;
-
-   double balance  = AccountInfoDouble(ACCOUNT_BALANCE);
-   double riskPct  = MathMax(0.1, MathMin(InpRiskPercent, 20.0));  // clamp 0.1–20%
-   double riskAmt  = balance * riskPct / 100.0;
-   double lots     = riskAmt / slPips / 10.0;
-
-   double step   = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
-   double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
-   double maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
-
+   double balance      = AccountInfoDouble(ACCOUNT_BALANCE);
+   // Trading plan: risk = balance / 6
+   double riskAmount   = balance / 6.0;
+   // v1.24: correct formula accounts for pip size AND contract size
+   // P&L per lot = contract_size × sl_price_distance
+   // sl_price_distance = slPips × g_PipSize
+   // Therefore: lots = risk / (slPips × g_PipSize × contractSize)
+   // AvaTrade US_30: contractSize=10, g_PipSize=1.0 → lots = risk / (slPips × 10)
+   // BlackBull US30: contractSize=1,  g_PipSize=0.1 → lots = risk / (slPips × 0.1 × 1) = risk / (sl_price_dist)
+   double contractSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
+   if(contractSize <= 0) contractSize = 1;
+   double pipSz = (g_PipSize > 0) ? g_PipSize : 1.0;
+   double lots    = riskAmount / (slPips * pipSz * contractSize);
+   double step    = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   double minLot  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double maxLot  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
    lots = MathRound(lots / step) * step;
    lots = MathMax(minLot, MathMin(maxLot, lots));
 
-   PrintFormat("CalcLotSize: balance=%.2f risk=%.1f%%=%.2f SL=%.1f pips → lots=%.2f",
-               balance, riskPct, riskAmt, slPips, lots);
+   // v1.25: cap lots to what margin can actually afford (handles 1:100 effective margin on indices)
+   double marginPerLot = SymbolInfoDouble(_Symbol, SYMBOL_MARGIN_INITIAL);
+   if(marginPerLot <= 0)
+   {
+      // fallback: estimate from price and leverage
+      double price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      double leverage = (double)AccountInfoInteger(ACCOUNT_LEVERAGE);
+      if(leverage <= 0) leverage = 100;
+      marginPerLot = (price * contractSize) / leverage;
+   }
+   if(marginPerLot > 0)
+   {
+      double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
+      double maxAffordable = MathFloor((freeMargin * 0.9) / marginPerLot / step) * step;
+      maxAffordable = MathMax(minLot, maxAffordable);
+      if(lots > maxAffordable)
+      {
+         PrintFormat("CalcLotSize: margin cap applied — reduced from %.2f to %.2f (marginPerLot=%.2f freeMargin=%.2f)",
+                     lots, maxAffordable, marginPerLot, freeMargin);
+         lots = maxAffordable;
+      }
+   }
+
+   PrintFormat("CalcLotSize: balance=%.2f risk=%.2f contractSize=%.0f pipSize=%.2f SL=%.1f pips → lots=%.2f",
+               balance, riskAmount, contractSize, pipSz, slPips, lots);
    return lots;
 }
 
 //============================================================
 //  ASIAN SESSION ANALYSIS
-//  Runs once per calendar day (cached by g_AsianDate).
-//  BarTimeNY() is acceptable here — it only identifies which
-//  historical bars are in the 19:00–00:00 Eastern window.
-//  A 1-hour broker offset error would slightly shift the Asian
-//  range but cannot trigger a trade at the wrong time.
 //============================================================
 
 void AnalyseAsianSession()
@@ -537,7 +873,6 @@ void AnalyseAsianSession()
    {
       MqlDateTime bDt;
       TimeToStruct(BarTimeNY(i), bDt);
-
       MqlDateTime bMidDt = bDt;
       bMidDt.hour = 0; bMidDt.min = 0; bMidDt.sec = 0;
       datetime bDay = StructToTime(bMidDt);
@@ -545,9 +880,7 @@ void AnalyseAsianSession()
       if(bDay < today - 86400) break;
       if(bDay > today) continue;
 
-      // Asian session wraps midnight: 19:00–00:00 Eastern
       bool inAsian = (bDt.hour >= InpAsianStartNY || bDt.hour < InpAsianEndNY);
-
       if(inAsian)
       {
          foundAny = true;
@@ -562,19 +895,13 @@ void AnalyseAsianSession()
          if(bC <= bO) g_AllAsianBullish = false;
          if(bC >= bO) g_AllAsianBearish = false;
 
-         // Last Asian bar = the bar that opens at 23:00 (one before midnight)
          int sAsianLast = (InpAsianEndNY - 1 + 24) % 24;
-         if(bDt.hour == sAsianLast)
-            g_AsianLastBar = i;
+         if(bDt.hour == sAsianLast) g_AsianLastBar = i;
       }
    }
 
    if(!foundAny)
-   {
-      g_AsianLow        = 0;
-      g_AllAsianBullish = false;
-      g_AllAsianBearish = false;
-   }
+   { g_AsianLow = 0; g_AllAsianBullish = false; g_AllAsianBearish = false; }
    else if(g_AsianLow == DBL_MAX)
       g_AsianLow = 0;
 
@@ -587,14 +914,6 @@ void AnalyseAsianSession()
 
    g_AsianDate = today;
 
-   if(g_AllAsianBullish)
-   {
-      string msg = "⚠ CAUTION: All Asian candles BULLISH — potential SELL reversal on " + _Symbol;
-      Print(msg);
-      if(InpPopupAlerts) Alert(msg);
-      if(InpPushAlerts)  SendNotification(msg);
-   }
-
    PrintFormat("Asian session | High:%.5f Low:%.5f FVG:%s AllBull:%s AllBear:%s",
                g_AsianHigh, g_AsianLow,
                g_AsianFVGBullish ? "BULLISH" : g_AsianFVGBearish ? "BEARISH" : "NONE",
@@ -604,27 +923,10 @@ void AnalyseAsianSession()
 
 //============================================================
 //  FVG DETECTION
-//
-//  2-candle gap (bar numbering, newest→oldest):
-//    startBar   = candle 2 (newest)
-//    startBar+1 = candle 1 (oldest)
-//
-//  Bullish FVG: candle2 body bottom > candle1 HIGH (wick)
-//               Gap zone = [ C1.high → C2.body.bottom ]
-//
-//  Bearish FVG: candle2 body top    < candle1 LOW  (wick)
-//               Gap zone = [ C2.body.top → C1.low ]
-//
-//  Even a 1–2 pip gap above/below the wick qualifies.
-//  Returns: 1=bullish, -1=bearish, 0=none
 //============================================================
 
 int DetectFVG(int startBar)
 {
-   //   startBar+1 = candle 1 (older)
-   //   startBar   = candle 2 (newer)
-   // Bullish: C2 body bottom gapped above C1 HIGH (wick top)
-   // Bearish: C2 body top    gapped below C1 LOW  (wick bottom)
    if(startBar < 0 || startBar + 1 >= iBars(_Symbol, PERIOD_H1)) return 0;
 
    double c1High  = iHigh (_Symbol, PERIOD_H1, startBar + 1);
@@ -635,8 +937,8 @@ int DetectFVG(int startBar)
    double c2BodyTop    = MathMax(c2Open, c2Close);
    double c2BodyBottom = MathMin(c2Open, c2Close);
 
-   if(c2BodyBottom > c1High) return  1;  // bullish: C2 body cleared C1 wick high
-   if(c2BodyTop    < c1Low)  return -1;  // bearish: C2 body cleared C1 wick low
+   if(c2BodyBottom > c1High) return  1;
+   if(c2BodyTop    < c1Low)  return -1;
    return 0;
 }
 
@@ -653,52 +955,125 @@ bool GetFVGZone(int startBar, double &zoneHigh, double &zoneLow)
    double c2BodyTop    = MathMax(c2Open, c2Close);
    double c2BodyBottom = MathMin(c2Open, c2Close);
 
-   if(type == 1)
-   {
-      zoneLow  = c1High;       // top of candle 1 wick
-      zoneHigh = c2BodyBottom; // bottom of candle 2 body
-   }
-   else
-   {
-      zoneHigh = c1Low;        // bottom of candle 1 wick
-      zoneLow  = c2BodyTop;    // top of candle 2 body
-   }
+   if(type == 1)  { zoneLow  = c1High;    zoneHigh = c2BodyBottom; }
+   else           { zoneHigh = c1Low;     zoneLow  = c2BodyTop;    }
+
    return (zoneHigh > zoneLow);
 }
 
 //============================================================
-//  MARKET STRUCTURE UTILITIES
+//  MARKET STRUCTURE — SWING HIGH / LOW
+//
+//  v1.08: Uses true 3-bar swing pattern on H1.
+//  The Asian High/Low requirement has been REMOVED — TP is now
+//  simply the nearest H1 swing high (for buys) or swing low
+//  (for sells) within the lookback window, exactly as traded
+//  manually in the backtest journal.
+//
+//  Swing High: bar[i].high > bar[i+1].high AND bar[i].high > bar[i-1].high
+//  Swing Low:  bar[i].low  < bar[i+1].low  AND bar[i].low  < bar[i-1].low
 //============================================================
 
-// Short-term high: most recent bullish→bearish body transition ABOVE Asian High.
-// TP for buy setups. Returns 0 if nothing qualifies outside the Asian range.
+// GetSTHigh — TP for buy setups.
+// ICT Definition: where a bullish candle body transitions to a bearish candle body
+// ABOVE the Asian session high. Level = open of the bearish candle (where bodies meet).
+// v1.41: only scans bars BEFORE current Asian session start (19:00 ET yesterday)
 double GetSTHigh(int lookback = 20)
 {
-   int lim = MathMin(lookback, iBars(_Symbol, PERIOD_H1) - 2);
+   int lim = iBars(_Symbol, PERIOD_H1) - 2;
 
+   // Asian session start = 19:00 ET yesterday
+   datetime asianStart = TodayMidnight() - (24 - InpAsianStartNY) * 3600;
+
+   // Primary: bullish→bearish body transition above Asian High — BEFORE Asian session only
    for(int i = 1; i <= lim; i++)
    {
+      datetime barTimeET = BarTimeNY(i);
+      if(barTimeET >= asianStart) continue;  // skip bars during/after Asian session
+
       if(IsBearishCandle(i) && IsBullishCandle(i + 1))
       {
          double level = iOpen(_Symbol, PERIOD_H1, i);
-         if(level > g_AsianHigh) return level;
+         if(g_AsianHigh > 0 && level > g_AsianHigh)
+         {
+            PrintFormat("[GetSTHigh] Bull→Bear transition above Asian High at bar[%d] (pre-Asian): %.5f", i, level);
+            return level;
+         }
       }
    }
 
-   // Fallback: highest bar high that is still above the Asian session high
-   double h = 0;
+   // Fallback: nearest bullish→bearish transition above current ask — BEFORE Asian session only
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    for(int i = 1; i <= lim; i++)
    {
-      double barHigh = iHigh(_Symbol, PERIOD_H1, i);
-      if(barHigh > g_AsianHigh && barHigh > h)
-         h = barHigh;
+      datetime barTimeET = BarTimeNY(i);
+      if(barTimeET >= asianStart) continue;
+
+      if(IsBearishCandle(i) && IsBullishCandle(i + 1))
+      {
+         double level = iOpen(_Symbol, PERIOD_H1, i);
+         if(level > ask)
+         {
+            PrintFormat("[GetSTHigh] Fallback Bull→Bear above ask at bar[%d] (pre-Asian): %.5f", i, level);
+            return level;
+         }
+      }
    }
-   return h;
+   PrintFormat("[GetSTHigh] No valid STH found before Asian session");
+   return 0;
 }
 
-// Short-term low: most recent bearish→bullish body transition BELOW Asian Low.
-// TP for sell setups. Returns 0 if nothing qualifies outside the Asian range.
+// GetSTLow — TP for sell setups.
+// ICT Definition: where a bearish candle body transitions to a bullish candle body
+// BELOW the Asian session low. Level = open of the bullish candle (where bodies meet).
+// v1.41: only scans bars BEFORE current Asian session start (19:00 ET yesterday)
 double GetSTLow(int lookback = 20)
+{
+   int lim = iBars(_Symbol, PERIOD_H1) - 2;
+
+   // Asian session start = 19:00 ET yesterday
+   datetime asianStart = TodayMidnight() - (24 - InpAsianStartNY) * 3600;
+
+   // Primary: bearish→bullish body transition below Asian Low — BEFORE Asian session only
+   for(int i = 1; i <= lim; i++)
+   {
+      datetime barTimeET = BarTimeNY(i);
+      if(barTimeET >= asianStart) continue;  // skip bars during/after Asian session
+
+      if(IsBullishCandle(i) && IsBearishCandle(i + 1))
+      {
+         double level = iOpen(_Symbol, PERIOD_H1, i);
+         if(g_AsianLow > 0 && level < g_AsianLow)
+         {
+            PrintFormat("[GetSTLow] Bear→Bull transition below Asian Low at bar[%d] (pre-Asian): %.5f", i, level);
+            return level;
+         }
+      }
+   }
+
+   // Fallback: nearest bearish→bullish transition below current bid — BEFORE Asian session only
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   for(int i = 1; i <= lim; i++)
+   {
+      datetime barTimeET = BarTimeNY(i);
+      if(barTimeET >= asianStart) continue;
+
+      if(IsBullishCandle(i) && IsBearishCandle(i + 1))
+      {
+         double level = iOpen(_Symbol, PERIOD_H1, i);
+         if(level < bid)
+         {
+            PrintFormat("[GetSTLow] Fallback Bear→Bull below bid at bar[%d] (pre-Asian): %.5f", i, level);
+            return level;
+         }
+      }
+   }
+   PrintFormat("[GetSTLow] No valid STL found before Asian session");
+   return 0;
+}
+
+// GetSTLowForSL — nearest bearish→bullish body transition below current price (SL for buys)
+double GetSTLowForSL(double currentPrice, int lookback = 20)
 {
    int lim = MathMin(lookback, iBars(_Symbol, PERIOD_H1) - 2);
 
@@ -707,224 +1082,146 @@ double GetSTLow(int lookback = 20)
       if(IsBullishCandle(i) && IsBearishCandle(i + 1))
       {
          double level = iOpen(_Symbol, PERIOD_H1, i);
-         if(level < g_AsianLow) return level;
+         if(level < currentPrice)
+            return level;
       }
    }
-
-   // Fallback: lowest bar low that is still below the Asian session low
+   // Fallback: lowest low below current price
    double l = DBL_MAX;
    for(int i = 1; i <= lim; i++)
    {
       double barLow = iLow(_Symbol, PERIOD_H1, i);
-      if(barLow < g_AsianLow && barLow < l)
-         l = barLow;
+      if(barLow < currentPrice && barLow < l) l = barLow;
    }
    return (l == DBL_MAX) ? 0 : l;
+}
+
+// GetSTHighForSL — nearest bullish→bearish body transition above current price (SL for sells)
+double GetSTHighForSL(double currentPrice, int lookback = 20)
+{
+   int lim = MathMin(lookback, iBars(_Symbol, PERIOD_H1) - 2);
+
+   for(int i = 1; i <= lim; i++)
+   {
+      if(IsBearishCandle(i) && IsBullishCandle(i + 1))
+      {
+         double level = iOpen(_Symbol, PERIOD_H1, i);
+         if(level > currentPrice)
+            return level;
+      }
+   }
+   // Fallback: highest high above current price
+   double h = 0;
+   for(int i = 1; i <= lim; i++)
+   {
+      double barHigh = iHigh(_Symbol, PERIOD_H1, i);
+      if(barHigh > currentPrice && barHigh > h) h = barHigh;
+   }
+   return h;
 }
 
 bool IsBullishCandle(int bar) { return iClose(_Symbol, PERIOD_H1, bar) > iOpen(_Symbol, PERIOD_H1, bar); }
 bool IsBearishCandle(int bar) { return iClose(_Symbol, PERIOD_H1, bar) < iOpen(_Symbol, PERIOD_H1, bar); }
 
-bool HasDownsideViolation()
+// MostlyBearish: checks prior n bars for bearish bias (for buy setups)
+// At least 2 of the prior 3 bars bearish = bearish structure before the buy
+bool MostlyBearishPrior()
 {
-   return iLow(_Symbol, PERIOD_H1, 2) < iLow(_Symbol, PERIOD_H1, 3);
+   int bearCount = 0;
+   for(int i = 2; i <= 4; i++)
+      if(IsBearishCandle(i)) bearCount++;
+   return bearCount >= 2;
 }
 
-bool HasUpsideViolation()
+// MostlyBullish: checks prior n bars for bullish bias (for sell setups)
+// At least 2 of the prior 3 bars bullish = bullish structure before the sell
+bool MostlyBullishPrior()
 {
-   return iHigh(_Symbol, PERIOD_H1, 2) > iHigh(_Symbol, PERIOD_H1, 3);
+   int bullCount = 0;
+   for(int i = 2; i <= 4; i++)
+      if(IsBullishCandle(i)) bullCount++;
+   return bullCount >= 2;
 }
 
-double AvgBodySize(int fromBar = 2, int count = 20)
-{
-   double total = 0;
-   for(int i = fromBar; i < fromBar + count; i++)
-      total += MathAbs(iClose(_Symbol, PERIOD_H1, i) - iOpen(_Symbol, PERIOD_H1, i));
-   return total / count;
-}
-
-// Auto-Bias: derives trend direction from the last 5 closed D1 candles.
-// Majority (3+) bullish  → returns  1 (buy bias).
-// Majority (3+) bearish  → returns -1 (sell bias).
-// Split or doji majority → returns  0 (neutral — setups are skipped).
-int AutoBias()
-{
-   int d1Bars = iBars(_Symbol, PERIOD_D1);
-   if(d1Bars < 6) return 0;
-
-   int bullCount = 0, bearCount = 0;
-   for(int i = 1; i <= 5; i++)
-   {
-      double c = iClose(_Symbol, PERIOD_D1, i);
-      double o = iOpen (_Symbol, PERIOD_D1, i);
-      if(c > o) bullCount++;
-      else if(c < o) bearCount++;
-   }
-
-   if(bullCount >= 3) return  1;
-   if(bearCount >= 3) return -1;
-   return 0;
-}
-
-// Returns true when D1 bar[1] is a strong bullish reversal candle.
-// Requires:
-//   • D1 bar[2] was bearish  (prior down-move gives reversal context)
-//   • D1 bar[1] is bullish
-//   • Body of bar[1] >= InpD1ReversalBodyRatio of its full range  OR  it
-//     fully engulfs the body of bar[2]  (bullish-engulfing pattern)
-bool IsDailyBullishReversal()
-{
-   if(iBars(_Symbol, PERIOD_D1) < 3) return false;
-
-   double o1 = iOpen (_Symbol, PERIOD_D1, 1);
-   double c1 = iClose(_Symbol, PERIOD_D1, 1);
-   double h1 = iHigh (_Symbol, PERIOD_D1, 1);
-   double l1 = iLow  (_Symbol, PERIOD_D1, 1);
-   double o2 = iOpen (_Symbol, PERIOD_D1, 2);
-   double c2 = iClose(_Symbol, PERIOD_D1, 2);
-
-   if(c1 <= o1) { Print("[D1_Reversal_Bull] SKIP: bar[1] not bullish"); return false; }
-   if(c2 >= o2) { Print("[D1_Reversal_Bull] SKIP: bar[2] not bearish"); return false; }
-
-   double body  = c1 - o1;
-   double range = h1 - l1;
-
-   if(range > 0 && body / range >= InpD1ReversalBodyRatio)
-   {
-      PrintFormat("[D1_Reversal_Bull] Strong body: body/range=%.2f", body / range);
-      return true;
-   }
-
-   // Bullish engulfing: bar[1] body fully wraps bar[2] body
-   double bH2 = MathMax(o2, c2);
-   double bL2 = MathMin(o2, c2);
-   if(c1 >= bH2 && o1 <= bL2)
-   {
-      Print("[D1_Reversal_Bull] Bullish engulfing confirmed");
-      return true;
-   }
-
-   PrintFormat("[D1_Reversal_Bull] SKIP: body/range=%.2f below %.2f, not engulfing",
-               (range > 0 ? body / range : 0), InpD1ReversalBodyRatio);
-   return false;
-}
-
-// Returns true when D1 bar[1] is a strong bearish reversal candle.
-// Requires:
-//   • D1 bar[2] was bullish  (prior up-move gives reversal context)
-//   • D1 bar[1] is bearish
-//   • Body of bar[1] >= InpD1ReversalBodyRatio of its full range  OR  it
-//     fully engulfs the body of bar[2]  (bearish-engulfing pattern)
-bool IsDailyBearishReversal()
-{
-   if(iBars(_Symbol, PERIOD_D1) < 3) return false;
-
-   double o1 = iOpen (_Symbol, PERIOD_D1, 1);
-   double c1 = iClose(_Symbol, PERIOD_D1, 1);
-   double h1 = iHigh (_Symbol, PERIOD_D1, 1);
-   double l1 = iLow  (_Symbol, PERIOD_D1, 1);
-   double o2 = iOpen (_Symbol, PERIOD_D1, 2);
-   double c2 = iClose(_Symbol, PERIOD_D1, 2);
-
-   if(c1 >= o1) { Print("[D1_Reversal_Bear] SKIP: bar[1] not bearish"); return false; }
-   if(c2 <= o2) { Print("[D1_Reversal_Bear] SKIP: bar[2] not bullish"); return false; }
-
-   double body  = o1 - c1;
-   double range = h1 - l1;
-
-   if(range > 0 && body / range >= InpD1ReversalBodyRatio)
-   {
-      PrintFormat("[D1_Reversal_Bear] Strong body: body/range=%.2f", body / range);
-      return true;
-   }
-
-   // Bearish engulfing: bar[1] body fully wraps bar[2] body
-   double bH2 = MathMax(o2, c2);
-   double bL2 = MathMin(o2, c2);
-   if(o1 >= bH2 && c1 <= bL2)
-   {
-      Print("[D1_Reversal_Bear] Bearish engulfing confirmed");
-      return true;
-   }
-
-   PrintFormat("[D1_Reversal_Bear] SKIP: body/range=%.2f below %.2f, not engulfing",
-               (range > 0 ? body / range : 0), InpD1ReversalBodyRatio);
-   return false;
-}
-
-// Returns true when the current time falls inside the configurable news buffer
-// window for a high-impact USD event whose name contains "CPI", "PPI", or "Nonfarm".
-// Uses the built-in MT5 Economic Calendar API — no external data feed needed.
+// IsHighImpactNewsWindow — v1.39 rework
+//
+// Rule: If CPI/PPI/NFP is scheduled today (ET):
+//   - Block ALL entries from midnight (00:00 ET) until the release time
+//   - Allow entries again InpNewsMinsAfter minutes after the release
+//   - CRITICAL: bar[1] close time must also be AFTER the blockEnd window
+//   - On news days: if BOTH Asian High AND Low broken → block all day
+// ALL days: if both Asian High AND Low broken on separate bars → no trade
 bool IsHighImpactNewsWindow()
 {
    if(!InpNewsFilter) return false;
 
-   datetime now      = TimeCurrent();
-   datetime dayStart = now - (now % 86400);
-   datetime dayEnd   = dayStart + 86400;
+   // Get today's date range in server time for calendar lookup
+   datetime nowServer    = TimeCurrent();
+   int      serverOffset = (int)((datetime)TimeCurrent() - (datetime)TimeGMT());
+   datetime dayStart     = nowServer - (nowServer % 86400);
+   datetime dayEnd       = dayStart + 86400;
 
    MqlCalendarValue values[];
    int count = CalendarValueHistory(values, dayStart, dayEnd, "USD");
-   if(count <= 0) return false;
 
-   for(int i = 0; i < count; i++)
+   // Current time in Eastern Time
+   datetime nowET = NowNY();
+
+   // Bar[1] close time in Eastern Time
+   datetime bar1CloseET = BarTimeNY(1) + 3600; // bar[1] open + 1hr = close time
+
+   // Midnight ET today (00:00 ET)
+   MqlDateTime nowETdt;
+   TimeToStruct(nowET, nowETdt);
+   MqlDateTime midnightETdt = nowETdt;
+   midnightETdt.hour = 0; midnightETdt.min = 0; midnightETdt.sec = 0;
+   datetime midnightET = StructToTime(midnightETdt);
+
+   bool newsFoundToday = false;
+
+   if(count > 0)
    {
-      MqlCalendarEvent ev;
-      if(!CalendarEventById(values[i].event_id, ev)) continue;
-      if(ev.importance != CALENDAR_IMPORTANCE_HIGH)  continue;
-
-      string name = ev.name;
-      if(StringFind(name, "CPI")     < 0 &&
-         StringFind(name, "PPI")     < 0 &&
-         StringFind(name, "Nonfarm") < 0) continue;
-
-      datetime evTime = values[i].time;
-      if(now >= evTime - (datetime)(InpNewsMinsBefore * 60) &&
-         now <= evTime + (datetime)(InpNewsMinsAfter  * 60))
+      for(int i = 0; i < count; i++)
       {
-         PrintFormat("[NEWS FILTER] Blocked — %s at %s (buffer -%dm / +%dm)",
-                     name, TimeToString(evTime, TIME_DATE | TIME_MINUTES),
-                     InpNewsMinsBefore, InpNewsMinsAfter);
-         return true;
+         MqlCalendarEvent ev;
+         if(!CalendarEventById(values[i].event_id, ev)) continue;
+         if(ev.importance != CALENDAR_IMPORTANCE_HIGH)  continue;
+
+         string name = ev.name;
+         if(StringFind(name, "CPI")     < 0 &&
+            StringFind(name, "PPI")     < 0 &&
+            StringFind(name, "Nonfarm") < 0) continue;
+
+         newsFoundToday = true;
+
+         // Convert event server time → GMT → Eastern Time
+         datetime evTimeGMT = values[i].time - serverOffset;
+         datetime evTimeET  = evTimeGMT + EasternOffset() * 3600;
+         datetime blockEnd  = evTimeET + (datetime)(InpNewsMinsAfter * 60);
+
+         // Block from midnight ET until news release
+         if(nowET >= midnightET && nowET < evTimeET)
+         {
+            PrintFormat("[NEWS FILTER] Blocked — %s at %s ET. No entries until %s ET",
+                        name, TimeToString(evTimeET, TIME_MINUTES),
+                        TimeToString(blockEnd, TIME_MINUTES));
+            return true;
+         }
+
+         // Block for InpNewsMinsAfter minutes after release
+         if(nowET >= evTimeET && nowET < blockEnd)
+         {
+            PrintFormat("[NEWS FILTER] Blocked — %s released at %s ET. Entries allowed at %s ET",
+                        name, TimeToString(evTimeET, TIME_MINUTES),
+                        TimeToString(blockEnd, TIME_MINUTES));
+            return true;
+         }
       }
    }
+
+   // v1.42: Both levels broken check moved to OnTick (applies ALL days, not just news)
+
    return false;
-}
-
-//============================================================
-//  LONDON → NY KZ CANDLE DIRECTION CHECKS
-//
-//  These are called ONLY from TryStraightBuy/Sell at 6AM Eastern.
-//  At that moment the bar layout is fixed:
-//    bar[1] = 5AM candle  (trigger — checked separately)
-//    bar[2] = 4AM candle  ─┐
-//    bar[3] = 3AM candle   ├─ London KZ window (2AM–4AM)
-//    bar[4] = 2AM candle  ─┘
-//
-//  Count = InpNYKillZoneNY - InpLondonStartNY = 5 - 2 = 3 bars.
-//  Uses only bar indices — NO BarTimeNY(), NO timezone conversion.
-//============================================================
-
-// For Straight Buy: bars[2..4] (2AM–4AM) must be mostly bearish (≤1 bullish allowed).
-bool BearishFromLondonToNYKZ()
-{
-   int count = InpNYKillZoneNY - InpLondonStartNY; // 3 bars: 4AM, 3AM, 2AM
-   if(count <= 0) return false;
-   int bullishCount = 0;
-   for(int i = 2; i < 2 + count; i++)
-      if(IsBullishCandle(i)) bullishCount++;
-   return bullishCount <= 1;
-}
-
-// For Straight Sell: bars[2..4] (2AM–4AM) must be mostly bullish (≤1 bearish allowed).
-bool BullishFromLondonToNYKZ()
-{
-   int count = InpNYKillZoneNY - InpLondonStartNY;
-   if(count <= 0) return false;
-   int bearishCount = 0;
-   for(int i = 2; i < 2 + count; i++)
-      if(IsBearishCandle(i)) bearishCount++;
-   return bearishCount <= 1;
 }
 
 //============================================================
@@ -940,6 +1237,67 @@ bool HasOpenPosition()
    return false;
 }
 
+// Returns: 1 if Asian Low was broken first (buy setup), -1 if Asian High broken first (sell setup), 0 if neither
+// v1.35: fixed — checks HIGH first on each bar, then LOW, scanning oldest→newest
+// If a single bar breaks BOTH levels, the HIGH break takes priority (sell) since
+// price must have gone up before coming down within the same candle
+int AsianBreakDirection()
+{
+   if(g_AsianHigh <= 0 || g_AsianLow <= 0) return 0;
+
+   datetime todayMid = TodayMidnight();
+
+   // Collect bar indices from today starting at 01:00 ET onwards
+   int indices[];
+   int totalBars = iBars(_Symbol, PERIOD_H1);
+   for(int i = 1; i < totalBars; i++)
+   {
+      datetime barTime = BarTimeNY(i);
+      MqlDateTime bDt;
+      TimeToStruct(barTime, bDt);
+
+      datetime barDay = barTime - bDt.hour * 3600 - bDt.min * 60 - bDt.sec;
+      if(barDay < todayMid) break;  // gone into yesterday
+
+      if(bDt.hour < 1) continue;   // skip bars before 01:00 ET
+
+      ArrayResize(indices, ArraySize(indices) + 1);
+      indices[ArraySize(indices) - 1] = i;
+   }
+
+   // Iterate oldest→newest — first break found determines direction, period.
+   // No priority rules — whichever level breaks first on the oldest bar wins.
+   for(int j = ArraySize(indices) - 1; j >= 0; j--)
+   {
+      int i = indices[j];
+      double barLow  = iLow (_Symbol, PERIOD_H1, i);
+      double barHigh = iHigh(_Symbol, PERIOD_H1, i);
+
+      bool brokeHigh = (barHigh > g_AsianHigh);
+      bool brokeLow  = (barLow  < g_AsianLow);
+
+      // v1.38: debug log every bar scanned
+      MqlDateTime dbDt;
+      TimeToStruct(BarTimeNY(i), dbDt);
+      PrintFormat("[AsianBreak] Scanning bar[%d] %02d:00 ET — High=%.5f brokeHigh=%s | Low=%.5f brokeLow=%s",
+                  i, dbDt.hour, barHigh, brokeHigh?"YES":"NO", barLow, brokeLow?"YES":"NO");
+
+      if(brokeLow && !brokeHigh)  { PrintFormat("[AsianBreak] Asian Low broken at bar[%d] %02d:00 ET → BUY",  i, dbDt.hour); return  1; }
+      if(brokeHigh && !brokeLow)  { PrintFormat("[AsianBreak] Asian High broken at bar[%d] %02d:00 ET → SELL", i, dbDt.hour); return -1; }
+      if(brokeHigh && brokeLow)
+      {
+         // Same bar broke both — this should never happen on US30 H1
+         // but if it does, skip entirely (no valid direction)
+         PrintFormat("[AsianBreak] Bar[%d] %02d:00 ET broke BOTH levels on same bar → no trade", i, dbDt.hour);
+         return 0;
+      }
+   }
+   return 0;
+}
+
+// v1.40: Maximum lots per single order (BlackBull Markets limit)
+#define MAX_LOTS_PER_ORDER 100.0
+
 bool PlaceBuy(double entry, double sl, double tp, string label)
 {
    double slPips = PriceToPips(entry - sl);
@@ -948,60 +1306,69 @@ bool PlaceBuy(double entry, double sl, double tp, string label)
    if(slPips <= 0 || tpPips <= 0)
    { PrintFormat("[%s] Invalid SL/TP (slPips=%.1f tpPips=%.1f)", label, slPips, tpPips); return false; }
 
-   if(tpPips / slPips < InpMinRRR)
-   { PrintFormat("[%s] RRR %.2f below minimum %.1f — skipped", label, tpPips/slPips, InpMinRRR); return false; }
+   // v1.27: STH RRR must be >= 1.5 — TP stays at actual STH level (no 1:2 lock)
+   double rawRRR = tpPips / slPips;
+   if(rawRRR < 1.5)
+   { PrintFormat("[%s] SKIP: STH RRR %.2f below 1.5 minimum", label, rawRRR); return false; }
+   PrintFormat("[%s] STH RRR %.2f >= 1.5 — TP set to actual STH: %.5f", label, rawRRR, tp);
 
-   double lots = CalcLotSize(slPips);
-   if(lots <= 0) { PrintFormat("[%s] Lot calc returned 0", label); return false; }
+   double totalLots = CalcLotSize(slPips);
+   if(totalLots <= 0) { PrintFormat("[%s] Lot calc returned 0", label); return false; }
 
-   bool   ok  = false;
-   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   // v1.40: Split into multiple MAX_LOTS_PER_ORDER orders if needed
+   double step   = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double ask    = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   bool   anyOk  = false;
+   double remaining = totalLots;
+   int    orderNum  = 1;
 
-   if(InpExecMode == EXEC_MARKET)
+   while(remaining >= minLot)
    {
-      ok = trade.Buy(lots, _Symbol, 0, sl, tp, label);
-      PrintFormat("[%s] EXEC_MARKET — buy at market ask=%.5f", label, ask);
-   }
-   else if(InpExecMode == EXEC_LIMIT)
-   {
-      if(entry < ask)
-         ok = trade.BuyLimit(lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);
-      else
-         ok = trade.BuyStop(lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);
-      PrintFormat("[%s] EXEC_LIMIT — %s at %.5f", label, entry < ask ? "BuyLimit" : "BuyStop", entry);
-   }
-   else // EXEC_AUTO
-   {
-      if(MathAbs(entry - ask) <= PipsToPrice(2.0))
-      {
+      double lots = MathMin(remaining, MAX_LOTS_PER_ORDER);
+      lots = MathRound(lots / step) * step;
+      if(lots < minLot) break;
+
+      bool ok = false;
+      if(InpExecMode == EXEC_MARKET)
          ok = trade.Buy(lots, _Symbol, 0, sl, tp, label);
-         PrintFormat("[%s] EXEC_AUTO — market buy (entry within 2 pips of ask=%.5f)", label, ask);
-      }
-      else if(entry < ask)
+      else if(InpExecMode == EXEC_LIMIT)
       {
-         ok = trade.BuyLimit(lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);
-         PrintFormat("[%s] EXEC_AUTO — BuyLimit at %.5f (ask=%.5f)", label, entry, ask);
+         if(entry < ask) ok = trade.BuyLimit(lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);
+         else            ok = trade.BuyStop (lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);
       }
       else
       {
-         ok = trade.BuyStop(lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);
-         PrintFormat("[%s] EXEC_AUTO — BuyStop at %.5f (ask=%.5f)", label, entry, ask);
+         if(MathAbs(entry - ask) <= PipsToPrice(2.0))
+            ok = trade.Buy(lots, _Symbol, 0, sl, tp, label);
+         else if(entry < ask)
+            ok = trade.BuyLimit(lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);
+         else
+            ok = trade.BuyStop(lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);
       }
+
+      if(ok)
+      {
+         anyOk = true;
+         string msg = StringFormat("BUY [%s] Order %d/%d Entry:%.5f SL:%.5f TP:%.5f Lots:%.2f RRR:1:%.2f",
+                                   label, orderNum, (int)MathCeil(totalLots/MAX_LOTS_PER_ORDER),
+                                   entry, sl, tp, lots, tpPips/slPips);
+         Print(msg);
+         if(orderNum == 1)
+         {
+            if(InpPopupAlerts) Alert(msg);
+            if(InpPushAlerts)  SendNotification(msg);
+         }
+      }
+      else
+         PrintFormat("BUY FAILED [%s] Order %d Code:%d %s", label, orderNum, trade.ResultRetcode(), trade.ResultComment());
+
+      remaining -= lots;
+      orderNum++;
    }
 
-   if(ok)
-   {
-      g_DailyCount++;
-      string msg = StringFormat("✓ BUY [%s] Entry:%.5f SL:%.5f TP:%.5f Lots:%.2f",
-                                label, entry, sl, tp, lots);
-      Print(msg);
-      if(InpPopupAlerts) Alert(msg);
-      if(InpPushAlerts)  SendNotification(msg);
-   }
-   else
-      PrintFormat("✗ BUY FAILED [%s] Code:%d %s", label, trade.ResultRetcode(), trade.ResultComment());
-
-   return ok;
+   if(anyOk) g_DailyCount++;
+   return anyOk;
 }
 
 bool PlaceSell(double entry, double sl, double tp, string label)
@@ -1012,65 +1379,69 @@ bool PlaceSell(double entry, double sl, double tp, string label)
    if(slPips <= 0 || tpPips <= 0)
    { PrintFormat("[%s] Invalid SL/TP (slPips=%.1f tpPips=%.1f)", label, slPips, tpPips); return false; }
 
-   if(tpPips / slPips < InpMinRRR)
-   { PrintFormat("[%s] RRR %.2f below minimum %.1f — skipped", label, tpPips/slPips, InpMinRRR); return false; }
+   // v1.27: STL RRR must be >= 1.5 — TP stays at actual STL level (no 1:2 lock)
+   double rawRRR = tpPips / slPips;
+   if(rawRRR < 1.5)
+   { PrintFormat("[%s] SKIP: STL RRR %.2f below 1.5 minimum", label, rawRRR); return false; }
+   PrintFormat("[%s] STL RRR %.2f >= 1.5 — TP set to actual STL: %.5f", label, rawRRR, tp);
 
-   double lots = CalcLotSize(slPips);
-   if(lots <= 0) { PrintFormat("[%s] Lot calc returned 0", label); return false; }
+   double totalLots = CalcLotSize(slPips);
+   if(totalLots <= 0) { PrintFormat("[%s] Lot calc returned 0", label); return false; }
 
-   bool   ok  = false;
-   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   // v1.40: Split into multiple MAX_LOTS_PER_ORDER orders if needed
+   double step   = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double bid    = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   bool   anyOk  = false;
+   double remaining = totalLots;
+   int    orderNum  = 1;
 
-   if(InpExecMode == EXEC_MARKET)
+   while(remaining >= minLot)
    {
-      ok = trade.Sell(lots, _Symbol, 0, sl, tp, label);
-      PrintFormat("[%s] EXEC_MARKET — sell at market bid=%.5f", label, bid);
-   }
-   else if(InpExecMode == EXEC_LIMIT)
-   {
-      if(entry > bid)
-      {
-         ok = trade.SellLimit(lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);
-         PrintFormat("[%s] EXEC_LIMIT — SellLimit at %.5f", label, entry);
-      }
-      else
-      {
-         ok = trade.SellStop(lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);
-         PrintFormat("[%s] EXEC_LIMIT — SellStop at %.5f", label, entry);
-      }
-   }
-   else // EXEC_AUTO
-   {
-      if(MathAbs(entry - bid) <= PipsToPrice(2.0))
-      {
+      double lots = MathMin(remaining, MAX_LOTS_PER_ORDER);
+      lots = MathRound(lots / step) * step;
+      if(lots < minLot) break;
+
+      bool ok = false;
+      if(InpExecMode == EXEC_MARKET)
          ok = trade.Sell(lots, _Symbol, 0, sl, tp, label);
-         PrintFormat("[%s] EXEC_AUTO — market sell (entry within 2 pips of bid=%.5f)", label, bid);
-      }
-      else if(entry > bid + PipsToPrice(2.0))
+      else if(InpExecMode == EXEC_LIMIT)
       {
-         ok = trade.SellLimit(lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);
-         PrintFormat("[%s] EXEC_AUTO — SellLimit at %.5f (bid=%.5f)", label, entry, bid);
+         if(entry > bid) ok = trade.SellLimit(lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);
+         else            ok = trade.SellStop (lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);
       }
       else
       {
-         ok = trade.SellStop(lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);
-         PrintFormat("[%s] EXEC_AUTO — SellStop at %.5f (bid=%.5f)", label, entry, bid);
+         if(MathAbs(entry - bid) <= PipsToPrice(2.0))
+            ok = trade.Sell(lots, _Symbol, 0, sl, tp, label);
+         else if(entry > bid)
+            ok = trade.SellLimit(lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);
+         else
+            ok = trade.SellStop(lots, entry, _Symbol, sl, tp, ORDER_TIME_DAY, 0, label);
       }
+
+      if(ok)
+      {
+         anyOk = true;
+         string msg = StringFormat("SELL [%s] Order %d/%d Entry:%.5f SL:%.5f TP:%.5f Lots:%.2f RRR:1:%.2f",
+                                   label, orderNum, (int)MathCeil(totalLots/MAX_LOTS_PER_ORDER),
+                                   entry, sl, tp, lots, tpPips/slPips);
+         Print(msg);
+         if(orderNum == 1)
+         {
+            if(InpPopupAlerts) Alert(msg);
+            if(InpPushAlerts)  SendNotification(msg);
+         }
+      }
+      else
+         PrintFormat("SELL FAILED [%s] Order %d Code:%d %s", label, orderNum, trade.ResultRetcode(), trade.ResultComment());
+
+      remaining -= lots;
+      orderNum++;
    }
 
-   if(ok)
-   {
-      g_DailyCount++;
-      string msg = StringFormat("✓ SELL [%s] Entry:%.5f SL:%.5f TP:%.5f Lots:%.2f",
-                                label, entry, sl, tp, lots);
-      Print(msg);
-      if(InpPopupAlerts) Alert(msg);
-      if(InpPushAlerts)  SendNotification(msg);
-   }
-   else
-      PrintFormat("✗ SELL FAILED [%s] Code:%d %s", label, trade.ResultRetcode(), trade.ResultComment());
-
-   return ok;
+   if(anyOk) g_DailyCount++;
+   return anyOk;
 }
 
 //============================================================
@@ -1082,207 +1453,320 @@ bool ScanBuySetups()
    int  hr        = CurrentHour();
    bool triggered = false;
 
-   // Priority 1: FVG Asian Buy — fires from 01:00 candle, no upper window
-   if(!triggered && g_AsianFVGBullish)
-      triggered = TryFVGAsianBuy();
-
-   // Priority 2: FVG Buy | 02:00–10:00 NY
-   if(!triggered && hr >= InpLondonStartNY && hr <= InpTradingEndNY)
+   // Priority 1: FVG Buy — London + NY KZ (02:00–10:00)
+   if(!triggered && hr >= InpLondonStartNY && hr < InpTradingEndNY)
       triggered = TryFVGBuy();
 
-   // Priority 3: Straight Buy | 06:00–10:00 NY (5AM candle must have just closed)
-   if(!triggered && hr > InpNYKillZoneNY && hr <= InpTradingEndNY)
+   // Priority 3: Straight Buy — NY KZ only (05:00–10:00)
+   if(!triggered && hr >= InpNYKillZoneNY && hr < InpTradingEndNY)
       triggered = TryStraightBuy();
 
    return triggered;
 }
 
-// FVG Asian Buy
-// Trigger : bullish FVG on last Asian candle | fires from 01:00 candle | Daily buy reversal required
-// Entry   : market if RRR >= min; otherwise buy limit at min-RRR price
-// SL      : below Asian session low
-// TP      : ST high above Asian High; fallback 1:3 RR if no level above Asian High
+// ============================================================
+//  D1 REVERSAL HELPERS (v1.28)
+// ============================================================
+
+// HasD1BullishReversal — checks D1 bar[1] for a bullish reversal signal:
+//   1. Pin bar / hammer: lower wick of bar[1] breaks below bar[2] low
+//   2. Bullish engulfing: bar[1] is bullish AND body fully covers bar[2] body
+bool HasD1BullishReversal()
+{
+   int d1Bars = iBars(_Symbol, PERIOD_D1);
+   if(d1Bars < 3) return false;
+
+   double d1_1_Low   = iLow  (_Symbol, PERIOD_D1, 1);
+   double d1_2_Low   = iLow  (_Symbol, PERIOD_D1, 2);
+   double d1_1_Open  = iOpen (_Symbol, PERIOD_D1, 1);
+   double d1_1_Close = iClose(_Symbol, PERIOD_D1, 1);
+   double d1_2_Open  = iOpen (_Symbol, PERIOD_D1, 2);
+   double d1_2_Close = iClose(_Symbol, PERIOD_D1, 2);
+
+   // Pin bar / hammer: lower wick breaks below previous candle's low
+   bool isPinBar = (d1_1_Low < d1_2_Low);
+
+   // Bullish engulfing: bar[1] bullish body fully covers bar[2] body
+   double body1High = MathMax(d1_1_Open, d1_1_Close);
+   double body1Low  = MathMin(d1_1_Open, d1_1_Close);
+   double body2High = MathMax(d1_2_Open, d1_2_Close);
+   double body2Low  = MathMin(d1_2_Open, d1_2_Close);
+   bool isEngulfing = (d1_1_Close > d1_1_Open) &&   // bar[1] is bullish
+                      (body1High  >= body2High)  &&   // covers top of bar[2]
+                      (body1Low   <= body2Low);        // covers bottom of bar[2]
+
+   if(isPinBar)   PrintFormat("[D1Filter] Bullish pin bar — bar[1] low %.5f < bar[2] low %.5f", d1_1_Low, d1_2_Low);
+   if(isEngulfing) PrintFormat("[D1Filter] Bullish engulfing on D1 bar[1]");
+
+   return (isPinBar || isEngulfing);
+}
+
+// HasD1BearishReversal — checks D1 bar[1] for a bearish reversal signal:
+//   1. Pin bar / shooting star: upper wick of bar[1] breaks above bar[2] high
+//   2. Bearish engulfing: bar[1] is bearish AND body fully covers bar[2] body
+bool HasD1BearishReversal()
+{
+   int d1Bars = iBars(_Symbol, PERIOD_D1);
+   if(d1Bars < 3) return false;
+
+   double d1_1_High  = iHigh (_Symbol, PERIOD_D1, 1);
+   double d1_2_High  = iHigh (_Symbol, PERIOD_D1, 2);
+   double d1_1_Open  = iOpen (_Symbol, PERIOD_D1, 1);
+   double d1_1_Close = iClose(_Symbol, PERIOD_D1, 1);
+   double d1_2_Open  = iOpen (_Symbol, PERIOD_D1, 2);
+   double d1_2_Close = iClose(_Symbol, PERIOD_D1, 2);
+
+   // Pin bar / shooting star: upper wick breaks above previous candle's high
+   bool isPinBar = (d1_1_High > d1_2_High);
+
+   // Bearish engulfing: bar[1] bearish body fully covers bar[2] body
+   double body1High = MathMax(d1_1_Open, d1_1_Close);
+   double body1Low  = MathMin(d1_1_Open, d1_1_Close);
+   double body2High = MathMax(d1_2_Open, d1_2_Close);
+   double body2Low  = MathMin(d1_2_Open, d1_2_Close);
+   bool isEngulfing = (d1_1_Close < d1_1_Open) &&   // bar[1] is bearish
+                      (body1High  >= body2High)  &&   // covers top of bar[2]
+                      (body1Low   <= body2Low);        // covers bottom of bar[2]
+
+   if(isPinBar)    PrintFormat("[D1Filter] Bearish pin bar — bar[1] high %.5f > bar[2] high %.5f", d1_1_High, d1_2_High);
+   if(isEngulfing) PrintFormat("[D1Filter] Bearish engulfing on D1 bar[1]");
+
+   return (isPinBar || isEngulfing);
+}
+
+// GetD1ReversalTP — scans D1 bars from bar[2] backwards to find TP level
+// For Buy:  finds first D1 bar whose HIGH is BELOW the reversal candle's LOW
+// For Sell: finds first D1 bar whose LOW  is ABOVE the reversal candle's HIGH
+// Scans indefinitely until a valid level is found
+double GetD1ReversalTP(bool isBuy)
+{
+   int d1Bars = iBars(_Symbol, PERIOD_D1);
+   if(d1Bars < 3) return 0;
+
+   double reversalLow  = iLow (_Symbol, PERIOD_D1, 1);  // reversal candle low
+   double reversalHigh = iHigh(_Symbol, PERIOD_D1, 1);  // reversal candle high
+
+   for(int i = 2; i < d1Bars; i++)
+   {
+      if(isBuy)
+      {
+         double barHigh = iHigh(_Symbol, PERIOD_D1, i);
+         if(barHigh < reversalLow)
+         {
+            PrintFormat("[D1ReversalTP] Buy TP = D1 bar[%d] high %.5f (below reversal low %.5f)", i, barHigh, reversalLow);
+            return barHigh;
+         }
+      }
+      else
+      {
+         double barLow = iLow(_Symbol, PERIOD_D1, i);
+         if(barLow > reversalHigh)
+         {
+            PrintFormat("[D1ReversalTP] Sell TP = D1 bar[%d] low %.5f (above reversal high %.5f)", i, barLow, reversalHigh);
+            return barLow;
+         }
+      }
+   }
+
+   PrintFormat("[D1ReversalTP] No valid TP level found — skipping");
+   return 0;
+}
+
+// FVG Asian Buy (v1.28 rework)
+// Trigger : bullish FVG on 00:00 Asian candle + D1 bar[1] bullish reversal
+// Entry   : at 01:00 ET only (market order at open of that candle)
+// SL      : Asian session Low minus buffer
+// TP      : D1 reversal TP (first D1 bar[2+] whose high is below D1 bar[1] low)
 bool TryFVGAsianBuy()
 {
-   if(g_AsianLastBar < 0) return false;
-   if(AutoBias() != 1) return false;   // require bullish D1 bias
-   if(!IsDailyBullishReversal()) return false;  // require strong daily reversal candle
+   // Only fire at 01:00 ET
+   if(CurrentHour() != InpFVGAsianWindowStartNY)
+   { Print("[FVG_Asian_Buy] SKIP: not 01:00 ET"); return false; }
 
-   double zHigh, zLow;
-   if(!GetFVGZone(g_AsianLastBar, zHigh, zLow)) return false;
+   // Must have a bullish FVG on the last Asian candle (00:00 candle)
+   if(g_AsianLastBar < 0) { Print("[FVG_Asian_Buy] SKIP: no Asian last bar"); return false; }
+   if(!g_AsianFVGBullish) { Print("[FVG_Asian_Buy] SKIP: no bullish FVG on Asian last bar"); return false; }
 
-   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   // D1 filter: yesterday's candle must show a bullish reversal
+   if(!HasD1BullishReversal())
+   { Print("[FVG_Asian_Buy] SKIP: no D1 bullish reversal on bar[1]"); return false; }
+
+   // SL = Asian session Low minus buffer
+   if(g_AsianLow <= 0) { Print("[FVG_Asian_Buy] SKIP: Asian Low not set"); return false; }
    double sl  = g_AsianLow - PipsToPrice(InpFVGBuffer);
-   double tp  = GetSTHigh(InpSTH_Lookback);
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
 
-   if(sl >= ask) { PrintFormat("[FVG_Asian_Buy] SKIP: sl(%.5f) >= ask(%.5f)", sl, ask); return false; }
+   if(sl <= 0 || sl >= ask)
+   { PrintFormat("[FVG_Asian_Buy] SKIP: invalid SL %.5f vs ask %.5f", sl, ask); return false; }
 
-   if(tp <= g_AsianHigh)
-   {
-      tp = ask + 3.0 * (ask - sl);
-      PrintFormat("[FVG_Asian_Buy] No ST high above Asian High — using 1:3 RR TP: %.5f", tp);
-   }
+   // TP = D1 reversal level (first D1 bar whose high is below reversal candle low)
+   double tp = GetD1ReversalTP(true);
+   if(tp <= 0 || tp <= ask)
+   { PrintFormat("[FVG_Asian_Buy] SKIP: no valid D1 TP found or TP %.5f <= ask %.5f", tp, ask); return false; }
 
-   if(tp <= ask) { PrintFormat("[FVG_Asian_Buy] SKIP: tp(%.5f) <= ask(%.5f)", tp, ask); return false; }
+   double rrr = (ask - sl > 0) ? (tp - ask) / (ask - sl) : 0;
+   if(rrr < InpMinRRR)
+   { PrintFormat("[FVG_Asian_Buy] SKIP: RRR %.2f < minimum %.1f", rrr, InpMinRRR); return false; }
 
-   double entry;
-   double marketRRR = (ask - sl > 0) ? (tp - ask) / (ask - sl) : 0;
-
-   PrintFormat("[FVG_Asian_Buy] Market RRR=%.2f MinRRR=%.1f", marketRRR, InpMinRRR);
-
-   if(marketRRR >= InpMinRRR)
-   {
-      entry = ask;
-      PrintFormat("[FVG_Asian_Buy] RRR ok — market buy at %.5f", entry);
-   }
-   else
-   {
-      // Try gap midpoint first; fall back to min-RRR calculated price if needed
-      double gapMid    = (zHigh + zLow) / 2.0;
-      double gapMidRRR = (gapMid - sl > 0) ? (tp - gapMid) / (gapMid - sl) : 0;
-
-      if(gapMidRRR >= InpMinRRR && gapMid < ask && gapMid > sl)
-      {
-         entry = gapMid;
-         PrintFormat("[FVG_Asian_Buy] RRR low — BuyLimit at gap midpoint %.5f | RRR=%.2f", entry, gapMidRRR);
-      }
-      else
-      {
-         entry = (tp + InpMinRRR * sl) / (1.0 + InpMinRRR);
-         PrintFormat("[FVG_Asian_Buy] RRR low — BuyLimit at min-RRR price %.5f", entry);
-         if(entry >= ask || entry <= sl) { PrintFormat("[FVG_Asian_Buy] SKIP: entry(%.5f) out of range ask=%.5f sl=%.5f", entry, ask, sl); return false; }
-         double limitRRR = (entry - sl > 0) ? (tp - entry) / (entry - sl) : 0;
-         if(limitRRR < InpMinRRR) { PrintFormat("[FVG_Asian_Buy] SKIP: limitRRR %.2f < %.1f", limitRRR, InpMinRRR); return false; }
-         PrintFormat("[FVG_Asian_Buy] BuyLimit at %.5f | limitRRR=%.2f", entry, limitRRR);
-      }
-   }
-
-   return PlaceBuy(entry, sl, tp, "FVG_Asian_Buy");
+   PrintFormat("[FVG_Asian_Buy] entry=%.5f sl=%.5f (Asian Low) tp=%.5f (D1 level) RRR=%.2f", ask, sl, tp, rrr);
+   return PlaceBuy(ask, sl, tp, "FVG_Asian_Buy");
 }
 
-// FVG Buy
-// Trigger : downside violation of Asian range + bullish FVG | 02:00–10:00 NY
-// Entry   : market if RRR >= min; otherwise buy limit at min-RRR price inside FVG
-// SL      : below bar[2] low (the candle that swept down — always below the FVG gap)
-// TP      : ST high above Asian High; fallback 1:3 RR
+// FVG Buy (v1.46 rework)
+// When FVG bar closes:
+//   RR >= 1:2 → enter at market immediately
+//   RR < 1:2  → wait for next candle; if price reaches 1:2 during next candle → market
+//               if fill candle closes with RR <= 1:1.5 → place limit at exact 1:2 price
+//               if limit price invalid (below SL) → skip
 bool TryFVGBuy()
 {
-   if(g_StraightBuyDone)       { Print("[FVG_Buy] SKIP: straight buy already done today"); return false; }
-   if(!HasDownsideViolation())  { PrintFormat("[FVG_Buy] SKIP: no downside violation (bar2.low=%.5f bar3.low=%.5f)", iLow(_Symbol,PERIOD_H1,2), iLow(_Symbol,PERIOD_H1,3)); return false; }
-   if(DetectFVG(1) != 1)        { PrintFormat("[FVG_Buy] SKIP: no bullish FVG (bar2.high=%.5f bar1.low=%.5f)", iHigh(_Symbol,PERIOD_H1,2), iLow(_Symbol,PERIOD_H1,1)); return false; }
+   if(g_DailyCount >= InpMaxDailyTrades) return false;
+   if(g_StraightBuyDone || g_FVGBuyDone || g_FVGSellDone || g_StraightSellDone) return false;
 
-   double zHigh, zLow;
-   if(!GetFVGZone(1, zHigh, zLow)) { Print("[FVG_Buy] SKIP: FVG zone invalid"); return false; }
+   if(AsianBreakDirection() != 1)
+   { Print("[FVG_Buy] SKIP: Asian Low not broken first"); return false; }
+
+   // Scan 02:00–09:00 ET for most recent bullish FVG
+   int fvgBar    = -1;
+   int totalBars = iBars(_Symbol, PERIOD_H1);
+   datetime todayMid = TodayMidnight();
+
+   for(int i = 1; i < totalBars; i++)
+   {
+      datetime barTimeET = BarTimeNY(i);
+      MqlDateTime bDt;
+      TimeToStruct(barTimeET, bDt);
+      datetime barDay = barTimeET - bDt.hour * 3600 - bDt.min * 60 - bDt.sec;
+      if(barDay < todayMid) break;
+      if(bDt.hour < 2 || bDt.hour > 9) continue;
+
+      double barOpen  = iOpen(_Symbol, PERIOD_H1, i);
+      double barClose = iClose(_Symbol, PERIOD_H1, i);
+      double prevHigh = iHigh(_Symbol, PERIOD_H1, i + 1);
+      double bodyLow  = MathMin(barOpen, barClose);
+      double bodyHigh = MathMax(barOpen, barClose);
+
+      if(bodyLow > prevHigh)
+      {
+         fvgBar = i;
+         PrintFormat("[FVG_Buy] Bullish FVG at bar[%d] %02d:00 ET body(%.5f–%.5f) above bar[%d] high %.5f",
+                     i, bDt.hour, bodyLow, bodyHigh, i+1, prevHigh);
+         break;
+      }
+   }
+
+   if(fvgBar < 0)
+   { Print("[FVG_Buy] SKIP: no bullish FVG in 02:00–09:00 ET"); return false; }
 
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   double sl  = iLow(_Symbol, PERIOD_H1, 2) - PipsToPrice(InpFVGBuffer);
+   double sl  = iLow(_Symbol, PERIOD_H1, fvgBar + 1) - PipsToPrice(InpFVGBuffer);
    double tp  = GetSTHigh(InpSTH_Lookback);
 
-   PrintFormat("[FVG_Buy] Conditions met | ask=%.5f sl=%.5f tp=%.5f AsianHigh=%.5f", ask, sl, tp, g_AsianHigh);
+   if(sl <= 0 || sl >= ask)
+   { PrintFormat("[FVG_Buy] SKIP: invalid SL %.5f", sl); return false; }
 
-   if(sl >= ask) { PrintFormat("[FVG_Buy] SKIP: sl(%.5f) >= ask(%.5f)", sl, ask); return false; }
-
-   if(tp <= g_AsianHigh)
+   if(tp <= ask)
    {
-      tp = ask + 3.0 * (ask - sl);
-      PrintFormat("[FVG_Buy] No ST high above Asian High — using 1:3 RR TP: %.5f", tp);
+      double tp3R      = ask + 3.0 * (ask - sl);
+      double tpAsianHi = (g_AsianHigh > ask) ? g_AsianHigh : 0;
+      tp = MathMax(tp3R, tpAsianHi);
+      PrintFormat("[FVG_Buy] No STH — fallback TP: 3R=%.5f AsianHigh=%.5f → using %.5f", tp3R, tpAsianHi, tp);
    }
 
-   if(tp <= ask) { PrintFormat("[FVG_Buy] SKIP: tp(%.5f) <= ask(%.5f)", tp, ask); return false; }
+   // Check RR at current market price
+   double rrr = (tp - ask) / (ask - sl);
 
-   double entry;
-   double marketRRR = (ask - sl > 0) ? (tp - ask) / (ask - sl) : 0;
-
-   PrintFormat("[FVG_Buy] Market RRR=%.2f MinRRR=%.1f", marketRRR, InpMinRRR);
-
-   if(marketRRR >= InpMinRRR)
+   // RR >= 1:2 → enter at market immediately
+   if(rrr >= 2.0)
    {
-      entry = ask;
-      PrintFormat("[FVG_Buy] RRR ok — market buy at %.5f", entry);
-   }
-   else
-   {
-      // Try gap midpoint first; fall back to min-RRR calculated price if needed
-      double gapMid    = (zHigh + zLow) / 2.0;
-      double gapMidRRR = (gapMid - sl > 0) ? (tp - gapMid) / (gapMid - sl) : 0;
-
-      if(gapMidRRR >= InpMinRRR && gapMid < ask && gapMid > sl)
-      {
-         entry = gapMid;
-         PrintFormat("[FVG_Buy] RRR low — BuyLimit at gap midpoint %.5f | RRR=%.2f", entry, gapMidRRR);
-      }
-      else
-      {
-         entry = (tp + InpMinRRR * sl) / (1.0 + InpMinRRR);
-         PrintFormat("[FVG_Buy] RRR low — BuyLimit at min-RRR price %.5f", entry);
-         if(entry >= ask || entry <= sl) { PrintFormat("[FVG_Buy] SKIP: entry(%.5f) out of range ask=%.5f sl=%.5f", entry, ask, sl); return false; }
-         double limitRRR = (entry - sl > 0) ? (tp - entry) / (entry - sl) : 0;
-         if(limitRRR < InpMinRRR) { PrintFormat("[FVG_Buy] SKIP: limitRRR %.2f < %.1f", limitRRR, InpMinRRR); return false; }
-         PrintFormat("[FVG_Buy] BuyLimit at %.5f | limitRRR=%.2f", entry, limitRRR);
-      }
+      PrintFormat("[FVG_Buy] RR %.2f >= 1:2 — market entry at %.5f", rrr, ask);
+      bool ok = PlaceBuy(ask, sl, tp, "FVG_Buy");
+      if(ok) g_FVGBuyDone = true;
+      return ok;
    }
 
-   bool ok = PlaceBuy(entry, sl, tp, "FVG_Buy");
-   if(ok) g_FVGBuyDone = true;
-   return ok;
+   // RR < 1:2 → set pending 1:2 level for tick monitoring
+   // CheckFVGPendingEntry() will fire market entry when price drops to this level
+   double pending12 = (tp + 2.0 * sl) / 3.0;
+
+   if(pending12 <= sl || pending12 >= tp)
+   { PrintFormat("[FVG_Buy] SKIP: 1:2 entry level %.5f invalid", pending12); return false; }
+
+   // Only set if not already set
+   if(g_FVGBuyPending12 == 0)
+   {
+      g_FVGBuyPending12  = pending12;
+      g_FVGBuyPendingSL  = sl;
+      g_FVGBuyPendingTP  = tp;
+      PrintFormat("[FVG_Buy] RR %.2f < 1:2 — monitoring for 1:2 entry at %.5f on every tick", rrr, pending12);
+   }
+   return false;
 }
 
-// Straight Buy
-//
-// TIMING (bulletproof):
-//   • Outer guard in ScanBuySetups:  CurrentHour() > 5  (hr >= 6)
-//   • Inner guard here:              CurrentHour() == 6  (exactly the 6AM bar)
-//   Together these guarantee the trade fires ONLY when the 5AM candle has
-//   just closed as bar[1] and the 6AM bar has just opened.
-//   CurrentHour() uses TimeGMT() directly — broker timezone has zero effect.
-//
-// Trigger : 5AM candle (bar[1]) closes bullish
-//           bars[2..4] (2AM–4AM) mostly bearish (BearishFromLondonToNYKZ)
-// Entry   : market buy
-// SL      : below min(bar[1].low, bar[2].low)
-// TP      : ST high above Asian High; if all Asian candles bearish → Asian High
+// Straight Buy (v1.32 rework)
+// Trigger : Asian Low broken first (01:00 ET onwards)
+//           + any candle 05:00–10:00 ET closes bullish
+//           + no FVG Buy has fired yet since 01:00 ET
+// Entry   : market order immediately when bullish candle closes
+// SL      : lowest low of bar[1] and bar[2] minus buffer
+// TP      : actual STH, fallback to higher of 3R or Asian High
 bool TryStraightBuy()
 {
-   if(g_FVGBuyDone)   return false;
+   if(g_DailyCount >= InpMaxDailyTrades) return false;
+   if(g_FVGBuyDone || g_StraightBuyDone || g_FVGSellDone || g_StraightSellDone) return false;
 
-   // Must be exactly 6AM Eastern — the first bar after the 5AM candle closes.
-   // Uses CurrentHour() which is pure UTC-derived Eastern time, never broker clock.
-   if(CurrentHour() != InpNYKillZoneNY + 1) return false;
+   // Asian Low must be broken first
+   if(AsianBreakDirection() != 1)
+   { Print("[Straight_Buy] SKIP: Asian Low not broken first"); return false; }
 
-   // Belt-and-suspenders: directly verify bar[1] opened at 5AM Eastern.
-   // This rules out any edge case (data gap, DST boundary, server clock drift)
-   // where CurrentHour() passes but bar[1] is NOT actually the 5AM candle.
-   // Fires ONLY after the 5AM candle has closed — never at or during the 5AM bar.
-   { MqlDateTime _b1; TimeToStruct(BarTimeNY(1), _b1); if(_b1.hour != InpNYKillZoneNY) return false; }
+   // Only fire on candles closing 05:00–09:00 ET (last valid entry at 10:00 open)
+   int hourNY = CurrentHour();
+   if(hourNY < 5 || hourNY > 9)
+   { PrintFormat("[Straight_Buy] SKIP: outside 05:00–09:00 close window (now %d:00)", hourNY); return false; }
 
-   // Bars from London open (2AM) to NY KZ open (5AM) must be mostly bearish.
-   // Uses fixed bar indices — no timezone conversion needed.
-   if(!BearishFromLondonToNYKZ()) return false;
+   // Bar[1] must close bullish (close > open)
+   double bar1Open  = iOpen (_Symbol, PERIOD_H1, 1);
+   double bar1Close = iClose(_Symbol, PERIOD_H1, 1);
+   if(bar1Close <= bar1Open)
+   { Print("[Straight_Buy] SKIP: bar[1] not bullish"); return false; }
 
-   // 5AM candle (bar[1]) must be bullish
-   if(!IsBullishCandle(1)) return false;
+   PrintFormat("[Straight_Buy] Trigger: bar[1] bullish close=%.5f open=%.5f at %d:00 ET", bar1Close, bar1Open, hourNY);
 
    double entry = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   double sl    = MathMin(iLow(_Symbol, PERIOD_H1, 1),
-                          iLow(_Symbol, PERIOD_H1, 2)) - PipsToPrice(InpFVGBuffer);
 
-   if(sl >= entry) return false;
+   // SL = lowest low of bar[1] and bar[2] minus buffer
+   double low1 = iLow(_Symbol, PERIOD_H1, 1);
+   double low2 = iLow(_Symbol, PERIOD_H1, 2);
+   double sl   = MathMin(low1, low2) - PipsToPrice(InpFVGBuffer);
+   double tp   = GetSTHigh(InpSTH_Lookback);
 
-   double tp;
-   if(g_AllAsianBearish && g_AsianHigh > 0 && g_AsianHigh > entry)
+   if(sl <= 0 || sl >= entry)
+   { PrintFormat("[Straight_Buy] SKIP: invalid SL %.5f vs entry %.5f", sl, entry); return false; }
+
+   // v1.45: If STH gives RR >= 1.5 → cap TP at exactly 1:2
+   if(tp > entry)
    {
-      tp = g_AsianHigh;
-      double minTP = entry + InpMinRRR * (entry - sl);
-      if(tp < minTP)
+      double rawRRR = (tp - entry) / (entry - sl);
+      if(rawRRR >= 1.5)
       {
-         PrintFormat("[Straight_Buy] Asian High TP %.5f below min RRR — extending to %.5f", tp, minTP);
-         tp = minTP;
+         tp = entry + 2.0 * (entry - sl);
+         PrintFormat("[Straight_Buy] STH RRR %.2f >= 1.5 — TP capped at 1:2: %.5f", rawRRR, tp);
+      }
+      else if(rawRRR < 1.5)
+      {
+         PrintFormat("[Straight_Buy] SKIP: STH RRR %.2f below 1.5 minimum", rawRRR);
+         return false;
       }
    }
-   else
-      tp = GetSTHigh(InpSTH_Lookback);
+   {
+      double tp3R      = entry + 3.0 * (entry - sl);
+      double tpAsianHi = (g_AsianHigh > entry) ? g_AsianHigh : 0;
+      tp = MathMax(tp3R, tpAsianHi);
+      PrintFormat("[Straight_Buy] No STH — fallback TP: 3R=%.5f AsianHigh=%.5f → using %.5f", tp3R, tpAsianHi, tp);
+   }
 
-   if(tp <= entry) return false;
+   PrintFormat("[Straight_Buy] entry=%.5f sl=%.5f tp=%.5f RRR=%.2f",
+               entry, sl, tp, (entry - sl > 0) ? (tp - entry) / (entry - sl) : 0);
 
    bool ok = PlaceBuy(entry, sl, tp, "Straight_Buy");
    if(ok) g_StraightBuyDone = true;
@@ -1304,16 +1788,16 @@ void CheckAsianSellSLReentry()
    for(int i = total - 1; i >= 0; i--)
    {
       ulong ticket = HistoryDealGetTicket(i);
-      if(HistoryDealGetString(ticket,  DEAL_COMMENT) != "FVG_Asian_Sell") continue;
+      if(HistoryDealGetString (ticket, DEAL_COMMENT) != "FVG_Asian_Sell") continue;
       if(HistoryDealGetInteger(ticket, DEAL_MAGIC)   != InpMagicNumber)   continue;
-      if(HistoryDealGetString(ticket,  DEAL_SYMBOL)  != _Symbol)          continue;
+      if(HistoryDealGetString (ticket, DEAL_SYMBOL)  != _Symbol)          continue;
       if(HistoryDealGetInteger(ticket, DEAL_ENTRY)   != DEAL_ENTRY_OUT)   continue;
 
       double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT);
       if(profit < 0)
       {
          g_AsianSellSLHit = true;
-         string msg = "⚠ FVG_Asian_Sell SL hit — re-entry BUY on next bar. Verify TP at daily equal highs.";
+         string msg = "FVG_Asian_Sell SL hit — re-entry BUY on next bar.";
          Print(msg);
          if(InpPopupAlerts) Alert(msg);
          if(InpPushAlerts)  SendNotification(msg);
@@ -1325,16 +1809,17 @@ void CheckAsianSellSLReentry()
 bool TryAsianSellReentryBuy()
 {
    double entry = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   // v1.17: SL at wick (low) of previous candle bar[1]
    double sl    = iLow(_Symbol, PERIOD_H1, 1) - PipsToPrice(InpFVGBuffer);
    double tp    = GetSTHigh(InpSTH_Lookback);
 
-   if(tp <= entry) return false;
+   if(sl <= 0 || sl >= entry || tp <= entry) return false;
 
    bool ok = PlaceBuy(entry, sl, tp, "Asian_Sell_Reentry_Buy");
    if(ok)
    {
       g_AsianSellReentered = true;
-      string msg = "✓ Re-entry BUY after FVG_Asian_Sell SL hit. ⚠ Move TP to equal highs on D1.";
+      string msg = "Re-entry BUY after FVG_Asian_Sell SL hit. Check TP at equal highs on D1.";
       Print(msg);
       if(InpPopupAlerts) Alert(msg);
       if(InpPushAlerts)  SendNotification(msg);
@@ -1351,181 +1836,230 @@ bool ScanSellSetups()
    int  hr        = CurrentHour();
    bool triggered = false;
 
-   // Priority 1: FVG Asian Sell — fires from 01:00 candle, no upper window
-   if(!triggered && g_AsianFVGBearish)
-      triggered = TryFVGAsianSell();
-
-   // Priority 2: FVG Sell | 02:00–10:00 NY
-   if(!triggered && hr >= InpLondonStartNY && hr <= InpTradingEndNY)
+   // Priority 1: FVG Sell — London + NY KZ (02:00–10:00)
+   if(!triggered && hr >= InpLondonStartNY && hr < InpTradingEndNY)
       triggered = TryFVGSell();
 
-   // Priority 3: Straight Sell | 06:00–10:00 NY (5AM candle must have just closed)
-   if(!triggered && hr > InpNYKillZoneNY && hr <= InpTradingEndNY)
+   // Priority 3: Straight Sell — NY KZ only (05:00–10:00)
+   if(!triggered && hr >= InpNYKillZoneNY && hr < InpTradingEndNY)
       triggered = TryStraightSell();
 
    return triggered;
 }
 
-// FVG Asian Sell
-// Context: bearish FVG on last Asian candle | fires from 01:00 candle | daily sell reversal required
-// Entry  : sell limit at FVG midpoint if RRR >= min; otherwise adjusted to min-RRR price
-// SL     : above candle 1 (older body) high
-// TP     : ST low below Asian Low
+// FVG Asian Sell (v1.28 rework)
+// Trigger : bearish FVG on 00:00 Asian candle + D1 bar[1] bearish reversal
+// Entry   : at 01:00 ET only (market order at open of that candle)
+// SL      : Asian session High plus buffer
+// TP      : D1 reversal TP (first D1 bar[2+] whose low is above D1 bar[1] high)
 bool TryFVGAsianSell()
 {
-   if(g_AsianLastBar < 0) return false;
-   if(AutoBias() != -1) return false;  // require bearish D1 bias
-   if(!IsDailyBearishReversal()) return false;  // require strong daily reversal candle
+   // Only fire at 01:00 ET
+   if(CurrentHour() != InpFVGAsianWindowStartNY)
+   { Print("[FVG_Asian_Sell] SKIP: not 01:00 ET"); return false; }
 
-   double zHigh, zLow;
-   if(!GetFVGZone(g_AsianLastBar, zHigh, zLow)) return false;
+   // Must have a bearish FVG on the last Asian candle (00:00 candle)
+   if(g_AsianLastBar < 0) { Print("[FVG_Asian_Sell] SKIP: no Asian last bar"); return false; }
+   if(!g_AsianFVGBearish) { Print("[FVG_Asian_Sell] SKIP: no bearish FVG on Asian last bar"); return false; }
 
+   // D1 filter: yesterday's candle must show a bearish reversal
+   if(!HasD1BearishReversal())
+   { Print("[FVG_Asian_Sell] SKIP: no D1 bearish reversal on bar[1]"); return false; }
+
+   // SL = Asian session High plus buffer
+   if(g_AsianHigh <= 0) { Print("[FVG_Asian_Sell] SKIP: Asian High not set"); return false; }
+   double sl  = g_AsianHigh + PipsToPrice(InpFVGBuffer);
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   double sl  = iHigh(_Symbol, PERIOD_H1, g_AsianLastBar + 1) + PipsToPrice(InpFVGBuffer);
-   double tp  = GetSTLow(InpSTH_Lookback);
-   if(tp <= 0) return false;
 
-   // Start with FVG midpoint; fall back to min-RRR price if R:R is insufficient
-   double entry   = (zHigh + zLow) / 2.0;
-   double fvgRRR  = (sl - entry > 0 && entry > tp) ? (entry - tp) / (sl - entry) : 0;
+   if(sl <= bid)
+   { PrintFormat("[FVG_Asian_Sell] SKIP: invalid SL %.5f vs bid %.5f", sl, bid); return false; }
 
-   PrintFormat("[FVG_Asian_Sell] FVG midpoint=%.5f RRR=%.2f MinRRR=%.1f", entry, fvgRRR, InpMinRRR);
+   // TP = D1 reversal level (first D1 bar whose low is above reversal candle high)
+   double tp = GetD1ReversalTP(false);
+   if(tp <= 0 || tp >= bid)
+   { PrintFormat("[FVG_Asian_Sell] SKIP: no valid D1 TP found or TP %.5f >= bid %.5f", tp, bid); return false; }
 
-   if(fvgRRR < InpMinRRR)
-   {
-      entry = (tp + InpMinRRR * sl) / (1.0 + InpMinRRR);
-      PrintFormat("[FVG_Asian_Sell] RRR low — SellLimit adjusted to %.5f", entry);
-   }
+   double rrr = (sl - bid > 0) ? (bid - tp) / (sl - bid) : 0;
+   if(rrr < InpMinRRR)
+   { PrintFormat("[FVG_Asian_Sell] SKIP: RRR %.2f < minimum %.1f", rrr, InpMinRRR); return false; }
 
-   if(entry <= bid) { PrintFormat("[FVG_Asian_Sell] SKIP: entry(%.5f) <= bid(%.5f)", entry, bid); return false; }
-   if(entry >= sl || tp >= entry) { PrintFormat("[FVG_Asian_Sell] SKIP: invalid geometry entry=%.5f sl=%.5f tp=%.5f", entry, sl, tp); return false; }
-
-   double limitRRR = (sl - entry > 0) ? (entry - tp) / (sl - entry) : 0;
-   if(limitRRR < InpMinRRR) { PrintFormat("[FVG_Asian_Sell] SKIP: limitRRR %.2f < %.1f", limitRRR, InpMinRRR); return false; }
-
-   string dailyMsg = "⚠ FVG_Asian_Sell placed — check DAILY equal lows for primary TP target.";
-   Print(dailyMsg);
-   if(InpPopupAlerts) Alert(dailyMsg);
-
-   return PlaceSell(entry, sl, tp, "FVG_Asian_Sell");
+   PrintFormat("[FVG_Asian_Sell] entry=%.5f sl=%.5f (Asian High) tp=%.5f (D1 level) RRR=%.2f", bid, sl, tp, rrr);
+   return PlaceSell(bid, sl, tp, "FVG_Asian_Sell");
 }
 
-// FVG Sell
-// Trigger : bearish FVG on bar[1]/bar[2] | 02:00–10:00 NY
-// Entry   : market if RRR >= min; otherwise sell limit at min-RRR price
-// SL      : above bar[2] high
-// TP      : ST low below Asian Low; if all Asian bullish → Asian Low
+// FVG Sell (v1.46 rework)
+// When FVG bar closes:
+//   RR >= 1:2 → enter at market immediately
+//   RR < 1:2  → wait for next candle; if price reaches 1:2 during next candle → market
+//               if fill candle closes with RR <= 1:1.5 → place limit at exact 1:2 price
+//               if limit price invalid (above SL) → skip
 bool TryFVGSell()
 {
-   if(g_FVGSellDone)         return false;
-   if(g_StraightSellDone)    return false;
-   if(DetectFVG(1) != -1)    return false;
+   if(g_DailyCount >= InpMaxDailyTrades) return false;
+   if(g_FVGSellDone || g_StraightSellDone || g_FVGBuyDone || g_StraightBuyDone) return false;
 
-   double zHigh, zLow;
-   if(!GetFVGZone(1, zHigh, zLow)) return false;
+   if(AsianBreakDirection() != -1)
+   { Print("[FVG_Sell] SKIP: Asian High not broken first"); return false; }
+
+   // Scan 02:00–09:00 ET for most recent bearish FVG
+   int fvgBar    = -1;
+   int totalBars = iBars(_Symbol, PERIOD_H1);
+   datetime todayMid = TodayMidnight();
+
+   for(int i = 1; i < totalBars; i++)
+   {
+      datetime barTimeET = BarTimeNY(i);
+      MqlDateTime bDt;
+      TimeToStruct(barTimeET, bDt);
+      datetime barDay = barTimeET - bDt.hour * 3600 - bDt.min * 60 - bDt.sec;
+      if(barDay < todayMid) break;
+      if(bDt.hour < 2 || bDt.hour > 9) continue;
+
+      double barOpen  = iOpen (_Symbol, PERIOD_H1, i);
+      double barClose = iClose(_Symbol, PERIOD_H1, i);
+      double prevLow  = iLow  (_Symbol, PERIOD_H1, i + 1);
+      double bodyHigh = MathMax(barOpen, barClose);
+      double bodyLow  = MathMin(barOpen, barClose);
+
+      if(bodyHigh < prevLow)
+      {
+         fvgBar = i;
+         PrintFormat("[FVG_Sell] Bearish FVG at bar[%d] %02d:00 ET body(%.5f–%.5f) below bar[%d] low %.5f",
+                     i, bDt.hour, bodyLow, bodyHigh, i+1, prevLow);
+         break;
+      }
+   }
+
+   if(fvgBar < 0)
+   { Print("[FVG_Sell] SKIP: no bearish FVG in 02:00–09:00 ET"); return false; }
 
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   double sl  = iHigh(_Symbol, PERIOD_H1, 2) + PipsToPrice(InpFVGBuffer);
+   double sl  = iHigh(_Symbol, PERIOD_H1, fvgBar + 1) + PipsToPrice(InpFVGBuffer);
+   double tp  = GetSTLow(InpSTH_Lookback);
 
-   double tp;
+   if(sl <= bid)
+   { PrintFormat("[FVG_Sell] SKIP: invalid SL %.5f", sl); return false; }
+
+   if(tp <= 0 || tp >= bid)
+   {
+      double tp3R      = bid - 3.0 * (sl - bid);
+      double tpAsianLo = (g_AsianLow > 0 && g_AsianLow < bid) ? g_AsianLow : tp3R;
+      tp = MathMin(tp3R, tpAsianLo);
+      PrintFormat("[FVG_Sell] No STL — fallback TP: 3R=%.5f AsianLow=%.5f → using %.5f", tp3R, tpAsianLo, tp);
+   }
+
    if(g_AllAsianBullish && g_AsianLow > 0 && g_AsianLow < bid)
+   {
       tp = g_AsianLow;
-   else
-      tp = GetSTLow(InpSTH_Lookback);
-
-   if(tp <= 0 || tp >= bid || sl <= bid) return false;
-
-   double entry;
-   double marketRRR = (sl - bid > 0) ? (bid - tp) / (sl - bid) : 0;
-
-   if(marketRRR >= InpMinRRR)
-   {
-      entry = bid;
-      PrintFormat("[FVG_Sell] RRR ok — market sell at %.5f", entry);
-   }
-   else
-   {
-      // Try gap midpoint first; fall back to min-RRR calculated price if needed
-      double gapMid    = (zHigh + zLow) / 2.0;
-      double gapMidRRR = (sl - gapMid > 0) ? (gapMid - tp) / (sl - gapMid) : 0;
-
-      if(gapMidRRR >= InpMinRRR && gapMid > bid && gapMid < sl)
-      {
-         entry = gapMid;
-         PrintFormat("[FVG_Sell] RRR low — SellLimit at gap midpoint %.5f | RRR=%.2f", entry, gapMidRRR);
-      }
-      else
-      {
-         entry = (tp + InpMinRRR * sl) / (1.0 + InpMinRRR);
-         if(entry <= bid || entry >= sl) return false;
-         double limitRRR = (sl - entry > 0) ? (entry - tp) / (sl - entry) : 0;
-         if(limitRRR < InpMinRRR) return false;
-         PrintFormat("[FVG_Sell] RRR low — SellLimit at min-RRR price %.5f | limitRRR=%.2f", entry, limitRRR);
-      }
+      PrintFormat("[FVG_Sell] All-bull Asian — TP overridden to Asian Low: %.5f", tp);
    }
 
-   bool ok = PlaceSell(entry, sl, tp, "FVG_Sell");
-   if(ok) g_FVGSellDone = true;
-   return ok;
+   // Check RR at current market price
+   double rrr = (bid - tp) / (sl - bid);
+
+   // RR >= 1:2 → enter at market immediately
+   if(rrr >= 2.0)
+   {
+      PrintFormat("[FVG_Sell] RR %.2f >= 1:2 — market entry at %.5f", rrr, bid);
+      bool ok = PlaceSell(bid, sl, tp, "FVG_Sell");
+      if(ok) g_FVGSellDone = true;
+      return ok;
+   }
+
+   // RR < 1:2 → set pending 1:2 level for tick monitoring
+   double pending12 = (tp + 2.0 * sl) / 3.0;
+
+   if(pending12 >= sl || pending12 <= tp)
+   { PrintFormat("[FVG_Sell] SKIP: 1:2 entry level %.5f invalid", pending12); return false; }
+
+   if(g_FVGSellPending12 == 0)
+   {
+      g_FVGSellPending12  = pending12;
+      g_FVGSellPendingSL  = sl;
+      g_FVGSellPendingTP  = tp;
+      PrintFormat("[FVG_Sell] RR %.2f < 1:2 — monitoring for 1:2 entry at %.5f on every tick", rrr, pending12);
+   }
+   return false;
 }
 
-// Straight Sell
+// Straight Sell (London + NY KZ — full window 02:00–10:00 ET)
 //
-// TIMING (bulletproof — mirrors Straight Buy):
-//   • Outer guard: CurrentHour() > 5  (hr >= 6)
-//   • Inner guard: CurrentHour() == 6 (exactly 6AM bar)
-//   The 5AM candle must have just closed as bar[1].
-//
-// Trigger : bar[1] (5AM) closes bearish with a wick above bar[2]'s high
-//           bars[2..4] (2AM–4AM) mostly bullish (BullishFromLondonToNYKZ)
-//           bar[2] or bar[3] must be bullish (prior formation)
-// Entry   : market sell
-// SL      : above max(bar[1].high, bar[2].high)
-// TP      : ST low below Asian Low; if all Asian candles bearish → Asian Low
+// v1.08 CHANGES:
+//   • Window: fires across full London+NY window, NOT locked to 6AM only
+//   • Trigger: bar[1] closed bearish + prior 3 bars mostly bullish (pullback)
+//   • SL: nearest H1 swing high above entry (+ buffer)
+//   • TP: nearest H1 swing low below entry (no Asian Low requirement)
+// Straight Sell (v1.32 rework)
+// Trigger : Asian High broken first (01:00 ET onwards)
+//           + any candle 05:00–09:00 ET closes bearish
+//           + no FVG Sell has fired yet since 01:00 ET
+// Entry   : market order immediately when bearish candle closes
+// SL      : highest high of bar[1] and bar[2] plus buffer
+// TP      : actual STL, fallback to lower of 3R or Asian Low
 bool TryStraightSell()
 {
-   if(g_FVGSellDone)    return false;
+   if(g_DailyCount >= InpMaxDailyTrades) return false;
+   if(g_FVGSellDone || g_StraightSellDone || g_FVGBuyDone || g_StraightBuyDone) return false;
 
-   // Must be exactly 6AM Eastern — the first bar after the 5AM candle closes.
-   if(CurrentHour() != InpNYKillZoneNY + 1) return false;
+   // Asian High must be broken first
+   if(AsianBreakDirection() != -1)
+   { Print("[Straight_Sell] SKIP: Asian High not broken first"); return false; }
 
-   // Belt-and-suspenders: directly verify bar[1] opened at 5AM Eastern.
-   // This rules out any edge case (data gap, DST boundary, server clock drift)
-   // where CurrentHour() passes but bar[1] is NOT actually the 5AM candle.
-   // Fires ONLY after the 5AM candle has closed — never at or during the 5AM bar.
-   { MqlDateTime _b1; TimeToStruct(BarTimeNY(1), _b1); if(_b1.hour != InpNYKillZoneNY) return false; }
+   // Only fire on candles closing 05:00–09:00 ET (last valid entry at 10:00 open)
+   int hourNY = CurrentHour();
+   if(hourNY < 5 || hourNY > 9)
+   { PrintFormat("[Straight_Sell] SKIP: outside 05:00–09:00 close window (now %d:00)", hourNY); return false; }
 
-   // Bars from London open (2AM) to NY KZ open (5AM) must be mostly bullish.
-   if(!BullishFromLondonToNYKZ()) return false;
+   // Bar[1] must close bearish (close < open)
+   double bar1Open  = iOpen (_Symbol, PERIOD_H1, 1);
+   double bar1Close = iClose(_Symbol, PERIOD_H1, 1);
+   if(bar1Close >= bar1Open)
+   { Print("[Straight_Sell] SKIP: bar[1] not bearish"); return false; }
 
-   // 5AM candle (bar[1]) must close bearish with a wick above bar[2]'s high
-   if(!IsBearishCandle(1)) return false;
-   if(iHigh(_Symbol, PERIOD_H1, 1) <= iHigh(_Symbol, PERIOD_H1, 2)) return false;
-
-   // Prior bullish formation must exist
-   if(!IsBullishCandle(2) && !IsBullishCandle(3)) return false;
+   PrintFormat("[Straight_Sell] Trigger: bar[1] bearish close=%.5f open=%.5f at %d:00 ET", bar1Close, bar1Open, hourNY);
 
    double entry = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   double sl    = MathMax(iHigh(_Symbol, PERIOD_H1, 1),
-                          iHigh(_Symbol, PERIOD_H1, 2)) + PipsToPrice(InpFVGBuffer);
 
-   if(sl <= entry) return false;
+   // SL = highest high of bar[1] and bar[2] plus buffer
+   double high1 = iHigh(_Symbol, PERIOD_H1, 1);
+   double high2 = iHigh(_Symbol, PERIOD_H1, 2);
+   double sl    = MathMax(high1, high2) + PipsToPrice(InpFVGBuffer);
+   double tp    = GetSTLow(InpSTH_Lookback);
 
-   double tp;
-   if(g_AllAsianBearish && g_AsianLow > 0 && g_AsianLow < entry)
+   if(sl <= entry)
+   { PrintFormat("[Straight_Sell] SKIP: invalid SL %.5f vs entry %.5f", sl, entry); return false; }
+
+   // v1.45: If STL gives RR >= 1.5 → cap TP at exactly 1:2
+   if(tp > 0 && tp < entry)
    {
-      tp = g_AsianLow;
-      double minTP = entry - InpMinRRR * (sl - entry);
-      if(tp > minTP)
+      double rawRRR = (entry - tp) / (sl - entry);
+      if(rawRRR >= 1.5)
       {
-         PrintFormat("[Straight_Sell] Asian Low TP %.5f above min RRR — extending to %.5f", tp, minTP);
-         tp = minTP;
+         tp = entry - 2.0 * (sl - entry);
+         PrintFormat("[Straight_Sell] STL RRR %.2f >= 1.5 — TP capped at 1:2: %.5f", rawRRR, tp);
+      }
+      else if(rawRRR < 1.5)
+      {
+         PrintFormat("[Straight_Sell] SKIP: STL RRR %.2f below 1.5 minimum", rawRRR);
+         return false;
       }
    }
-   else
-      tp = GetSTLow(InpSTH_Lookback);
+   {
+      double tp3R      = entry - 3.0 * (sl - entry);
+      double tpAsianLo = (g_AsianLow > 0 && g_AsianLow < entry) ? g_AsianLow : tp3R;
+      tp = MathMin(tp3R, tpAsianLo);
+      PrintFormat("[Straight_Sell] No STL — fallback TP: 3R=%.5f AsianLow=%.5f → using %.5f", tp3R, tpAsianLo, tp);
+   }
 
-   if(tp <= 0 || tp >= entry) return false;
+   // If all Asian candles were bullish → TP overridden to Asian Low
+   if(g_AllAsianBullish && g_AsianLow > 0 && g_AsianLow < entry)
+   {
+      tp = g_AsianLow;
+      PrintFormat("[Straight_Sell] All-bull Asian session — TP overridden to Asian Low: %.5f", tp);
+   }
+
+   PrintFormat("[Straight_Sell] entry=%.5f sl=%.5f tp=%.5f RRR=%.2f",
+               entry, sl, tp, (sl - entry > 0) ? (entry - tp) / (sl - entry) : 0);
 
    bool ok = PlaceSell(entry, sl, tp, "Straight_Sell");
    if(ok) g_StraightSellDone = true;
@@ -1533,19 +2067,24 @@ bool TryStraightSell()
 }
 
 //+------------------------------------------------------------------+
-//  END OF EA
+//  END OF EA v1.08
 //+------------------------------------------------------------------+
 //
-//  NOTES ON RE-ENTRIES (manual):
-//  1. FVG Asia Sell SL hit → automated re-entry buy fires next bar
+//  SUMMARY OF v1.08 CHANGES (matched to manual backtest journal):
 //
-//  AUTO-BIAS (v1.03):
-//  Counts last 5 closed D1 candles. 3+ bullish = buy bias only.
-//  3+ bearish = sell bias only. Split = neutral, no setups fired.
-//
-//  NEWS FILTER (v1.03):
-//  Uses MT5 Economic Calendar to detect USD CPI, PPI, NFP events.
-//  All new trades are blocked InpNewsMinsBefore minutes before and
-//  InpNewsMinsAfter minutes after each high-impact event.
+//  1. GetSTHigh — true 3-bar H1 swing high pattern; Asian High filter REMOVED
+//  2. GetSTLow  — true 3-bar H1 swing low  pattern; Asian Low  filter REMOVED
+//  3. GetSTLowForSL  — new: finds nearest swing low below price (SL for buys)
+//  4. GetSTHighForSL — new: finds nearest swing high above price (SL for sells)
+//  5. TryFVGAsianBuy  — AutoBias() and IsDailyBullishReversal() REMOVED
+//  6. TryFVGAsianSell — AutoBias() and IsDailyBearishReversal() REMOVED
+//  7. TryFVGBuy  — HasDownsideViolation() REMOVED; fires on any bullish FVG
+//  8. TryFVGSell — fires on any bearish FVG
+//  9. TryStraightBuy  — window: 02:00–10:00 ET (was: 6AM only)
+//                        trigger: bar[1] bullish + MostlyBearishPrior()
+//  10. TryStraightSell — window: 02:00–10:00 ET (was: 6AM only)
+//                         trigger: bar[1] bearish + MostlyBullishPrior()
+//  11. All SL placement now uses GetSTLowForSL / GetSTHighForSL
+//      (nearest H1 swing low/high) instead of Asian range levels
 //
 //+------------------------------------------------------------------+
