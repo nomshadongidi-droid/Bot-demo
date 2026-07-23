@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //|                       NomShadoNgidi_EA.mq5                       |
 //|            Expert Advisor — Nomshado Ngidi Trading Plan          |
-//|           Instrument: US30 / US_30 / US.30  |  Version 1.51        |
+//|           Instrument: US30 / US_30 / US.30  |  Version 1.52        |
 //+------------------------------------------------------------------+
 //
 //  ⚠ THIS EA WILL ONLY RUN ON US_30 (also accepted: US.30, US30)
@@ -10,6 +10,13 @@
 //  SETUP MODELS IMPLEMENTED:
 //  BUY  → FVG Asian Buy | FVG Buy | Straight Buy
 //  SELL → FVG Asian Sell | FVG Sell | Straight Sell
+//
+//  v1.52 CHANGES (from v1.51):
+//  • Straight Buy / Sell window start moved from 05:00 ET to 06:00 ET
+//    - Was: fires when any candle closes at 05:00–09:00 ET
+//    - Now: fires when any candle closes at 06:00–09:00 ET
+//    - Prevents the 05:00 ET (4:00 bar close) from triggering straight entries
+//    - InpNYKillZoneNY default changed from 5 to 6
 //
 //  v1.51 CHANGES (from v1.50):
 //  • OnInit guard: now prints which condition blocked the startup scan
@@ -237,7 +244,7 @@ input int    InpAsianStartNY          = 19;  // Asian Session Start — NY time 
 input int    InpAsianEndNY            = 0;   // Asian Session End   — NY time (plan: 00:00)
 input int    InpFVGAsianWindowStartNY = 1;   // FVG Asian setups window start — NY time (plan: 01:00)
 input int    InpLondonStartNY         = 2;   // London Kill Zone Start — NY time (plan: 02:00)
-input int    InpNYKillZoneNY          = 5;   // NY Kill Zone Start — NY time (plan: 05:00)
+input int    InpNYKillZoneNY          = 6;   // NY Kill Zone Start — NY time (plan: 06:00)
 input int    InpTradingEndNY          = 10;  // Trading Window End — NY time (plan: 10:00)
 
 input group "=== Risk Management ==="
@@ -1701,10 +1708,10 @@ bool TryStraightBuy()
    if(AsianBreakDirection() != 1)
    { Print("[Straight_Buy] SKIP: Asian Low not broken first"); return false; }
 
-   // Only fire on candles closing 05:00–09:00 ET (last valid entry at 10:00 open)
+   // Only fire on candles closing 06:00–09:00 ET (last valid entry at 10:00 open)
    int hourNY = CurrentHour();
-   if(hourNY < 5 || hourNY > 9)
-   { PrintFormat("[Straight_Buy] SKIP: outside 05:00–09:00 close window (now %d:00)", hourNY); return false; }
+   if(hourNY < 6 || hourNY > 9)
+   { PrintFormat("[Straight_Buy] SKIP: outside 06:00–09:00 close window (now %d:00)", hourNY); return false; }
 
    // Bar[1] must close bullish (close > open)
    double bar1Open  = iOpen (_Symbol, PERIOD_H1, 1);
@@ -1996,10 +2003,10 @@ bool TryStraightSell()
    if(AsianBreakDirection() != -1)
    { Print("[Straight_Sell] SKIP: Asian High not broken first"); return false; }
 
-   // Only fire on candles closing 05:00–09:00 ET (last valid entry at 10:00 open)
+   // Only fire on candles closing 06:00–09:00 ET (last valid entry at 10:00 open)
    int hourNY = CurrentHour();
-   if(hourNY < 5 || hourNY > 9)
-   { PrintFormat("[Straight_Sell] SKIP: outside 05:00–09:00 close window (now %d:00)", hourNY); return false; }
+   if(hourNY < 6 || hourNY > 9)
+   { PrintFormat("[Straight_Sell] SKIP: outside 06:00–09:00 close window (now %d:00)", hourNY); return false; }
 
    // Bar[1] must close bearish (close < open)
    double bar1Open  = iOpen (_Symbol, PERIOD_H1, 1);
