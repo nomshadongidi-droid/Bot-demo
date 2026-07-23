@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //|                       NomShadoNgidi_EA.mq5                       |
 //|            Expert Advisor — Nomshado Ngidi Trading Plan          |
-//|           Instrument: US30 / US_30 / US.30  |  Version 1.52        |
+//|           Instrument: US30 / US_30 / US.30  |  Version 1.53        |
 //+------------------------------------------------------------------+
 //
 //  ⚠ THIS EA WILL ONLY RUN ON US_30 (also accepted: US.30, US30)
@@ -10,6 +10,17 @@
 //  SETUP MODELS IMPLEMENTED:
 //  BUY  → FVG Asian Buy | FVG Buy | Straight Buy
 //  SELL → FVG Asian Sell | FVG Sell | Straight Sell
+//
+//  v1.53 CHANGES (from v1.52):
+//  • GetSTHigh / GetSTLow: now scan POST-Asian bars first (today from midnight ET)
+//    for the nearest swing high/low above/below current price — this matches the
+//    manual trade approach of using the nearest swing formed after the Asian session.
+//    Pre-Asian bars remain as fallback if nothing qualifies post-Asian.
+//  • TryStraightBuy / TryStraightSell: TP now uses the STH/STL directly (no longer
+//    overrides to 1:2 when STH is found). Fallback (3R / Asian level) only runs
+//    when no valid STH/STL is found.
+//  • Fixed missing `else` bug: fallback TP block was running unconditionally,
+//    overriding a valid STH/STL with the 3R level (caused the 52574 TP today).
 //
 //  v1.52 CHANGES (from v1.51):
 //  • Straight Buy / Sell window start moved from 05:00 ET to 06:00 ET
@@ -957,100 +968,130 @@ bool GetFVGZone(int startBar, double &zoneHigh, double &zoneLow)
 //============================================================
 
 // GetSTHigh — TP for buy setups.
-// ICT Definition: where a bullish candle body transitions to a bearish candle body
-// ABOVE the Asian session high. Level = open of the bearish candle (where bodies meet).
-// v1.41: only scans bars BEFORE current Asian session start (19:00 ET yesterday)
+// Nearest bull→bear body transition AFTER the Asian session (today's midnight ET onwards),
+// above the current Ask. Falls back to pre-Asian bars if nothing post-Asian qualifies.
 double GetSTHigh(int lookback = 20)
 {
    int lim = iBars(_Symbol, PERIOD_H1) - 2;
-
-   // Asian session start = 19:00 ET yesterday
-   datetime asianStart = TodayMidnight() - (24 - InpAsianStartNY) * 3600;
-
-   // Primary: bullish→bearish body transition above Asian High — BEFORE Asian session only
-   for(int i = 1; i <= lim; i++)
-   {
-      datetime barTimeET = BarTimeNY(i);
-      if(barTimeET >= asianStart) continue;  // skip bars during/after Asian session
-
-      if(IsBearishCandle(i) && IsBullishCandle(i + 1))
-      {
-         double level = iOpen(_Symbol, PERIOD_H1, i);
-         if(g_AsianHigh > 0 && level > g_AsianHigh)
-         {
-            PrintFormat("[GetSTHigh] Bull→Bear transition above Asian High at bar[%d] (pre-Asian): %.5f", i, level);
-            return level;
-         }
-      }
-   }
-
-   // Fallback: nearest bullish→bearish transition above current ask — BEFORE Asian session only
+   datetime asianEndET = TodayMidnight(); // midnight ET = Asian session end
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   for(int i = 1; i <= lim; i++)
+
+   // Primary: nearest bull→bear body transition AFTER Asian session, above Ask
+   for(int i = 1; i <= MathMin(lookback * 3, lim); i++)
    {
       datetime barTimeET = BarTimeNY(i);
-      if(barTimeET >= asianStart) continue;
+      if(barTimeET < asianEndET) break; // past today's post-Asian window
 
       if(IsBearishCandle(i) && IsBullishCandle(i + 1))
       {
          double level = iOpen(_Symbol, PERIOD_H1, i);
          if(level > ask)
          {
-            PrintFormat("[GetSTHigh] Fallback Bull→Bear above ask at bar[%d] (pre-Asian): %.5f", i, level);
+            PrintFormat("[GetSTHigh] Post-Asian swing high at bar[%d]: %.5f", i, level);
             return level;
          }
       }
    }
-   PrintFormat("[GetSTHigh] No valid STH found before Asian session");
+
+   // Fallback 1: pre-Asian bull→bear transition above Asian High
+   for(int i = 1; i <= lim; i++)
+   {
+      datetime barTimeET = BarTimeNY(i);
+      if(barTimeET >= asianEndET) continue; // skip today
+
+      if(IsBearishCandle(i) && IsBullishCandle(i + 1))
+      {
+         double level = iOpen(_Symbol, PERIOD_H1, i);
+         if(g_AsianHigh > 0 && level > g_AsianHigh)
+         {
+            PrintFormat("[GetSTHigh] Pre-Asian swing high above Asian High at bar[%d]: %.5f", i, level);
+            return level;
+         }
+      }
+   }
+
+   // Fallback 2: any pre-Asian transition above Ask
+   for(int i = 1; i <= lim; i++)
+   {
+      datetime barTimeET = BarTimeNY(i);
+      if(barTimeET >= asianEndET) continue;
+
+      if(IsBearishCandle(i) && IsBullishCandle(i + 1))
+      {
+         double level = iOpen(_Symbol, PERIOD_H1, i);
+         if(level > ask)
+         {
+            PrintFormat("[GetSTHigh] Fallback pre-Asian swing high at bar[%d]: %.5f", i, level);
+            return level;
+         }
+      }
+   }
+
+   PrintFormat("[GetSTHigh] No valid STH found");
    return 0;
 }
 
 // GetSTLow — TP for sell setups.
-// ICT Definition: where a bearish candle body transitions to a bullish candle body
-// BELOW the Asian session low. Level = open of the bullish candle (where bodies meet).
-// v1.41: only scans bars BEFORE current Asian session start (19:00 ET yesterday)
+// Nearest bear→bull body transition AFTER the Asian session (today's midnight ET onwards),
+// below the current Bid. Falls back to pre-Asian bars if nothing post-Asian qualifies.
 double GetSTLow(int lookback = 20)
 {
    int lim = iBars(_Symbol, PERIOD_H1) - 2;
-
-   // Asian session start = 19:00 ET yesterday
-   datetime asianStart = TodayMidnight() - (24 - InpAsianStartNY) * 3600;
-
-   // Primary: bearish→bullish body transition below Asian Low — BEFORE Asian session only
-   for(int i = 1; i <= lim; i++)
-   {
-      datetime barTimeET = BarTimeNY(i);
-      if(barTimeET >= asianStart) continue;  // skip bars during/after Asian session
-
-      if(IsBullishCandle(i) && IsBearishCandle(i + 1))
-      {
-         double level = iOpen(_Symbol, PERIOD_H1, i);
-         if(g_AsianLow > 0 && level < g_AsianLow)
-         {
-            PrintFormat("[GetSTLow] Bear→Bull transition below Asian Low at bar[%d] (pre-Asian): %.5f", i, level);
-            return level;
-         }
-      }
-   }
-
-   // Fallback: nearest bearish→bullish transition below current bid — BEFORE Asian session only
+   datetime asianEndET = TodayMidnight(); // midnight ET = Asian session end
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   for(int i = 1; i <= lim; i++)
+
+   // Primary: nearest bear→bull body transition AFTER Asian session, below Bid
+   for(int i = 1; i <= MathMin(lookback * 3, lim); i++)
    {
       datetime barTimeET = BarTimeNY(i);
-      if(barTimeET >= asianStart) continue;
+      if(barTimeET < asianEndET) break; // past today's post-Asian window
 
       if(IsBullishCandle(i) && IsBearishCandle(i + 1))
       {
          double level = iOpen(_Symbol, PERIOD_H1, i);
          if(level < bid)
          {
-            PrintFormat("[GetSTLow] Fallback Bear→Bull below bid at bar[%d] (pre-Asian): %.5f", i, level);
+            PrintFormat("[GetSTLow] Post-Asian swing low at bar[%d]: %.5f", i, level);
             return level;
          }
       }
    }
-   PrintFormat("[GetSTLow] No valid STL found before Asian session");
+
+   // Fallback 1: pre-Asian bear→bull transition below Asian Low
+   for(int i = 1; i <= lim; i++)
+   {
+      datetime barTimeET = BarTimeNY(i);
+      if(barTimeET >= asianEndET) continue; // skip today
+
+      if(IsBullishCandle(i) && IsBearishCandle(i + 1))
+      {
+         double level = iOpen(_Symbol, PERIOD_H1, i);
+         if(g_AsianLow > 0 && level < g_AsianLow)
+         {
+            PrintFormat("[GetSTLow] Pre-Asian swing low below Asian Low at bar[%d]: %.5f", i, level);
+            return level;
+         }
+      }
+   }
+
+   // Fallback 2: any pre-Asian transition below Bid
+   for(int i = 1; i <= lim; i++)
+   {
+      datetime barTimeET = BarTimeNY(i);
+      if(barTimeET >= asianEndET) continue;
+
+      if(IsBullishCandle(i) && IsBearishCandle(i + 1))
+      {
+         double level = iOpen(_Symbol, PERIOD_H1, i);
+         if(level < bid)
+         {
+            PrintFormat("[GetSTLow] Fallback pre-Asian swing low at bar[%d]: %.5f", i, level);
+            return level;
+         }
+      }
+   }
+
+   PrintFormat("[GetSTLow] No valid STL found");
    return 0;
 }
 
@@ -1732,21 +1773,16 @@ bool TryStraightBuy()
    if(sl <= 0 || sl >= entry)
    { PrintFormat("[Straight_Buy] SKIP: invalid SL %.5f vs entry %.5f", sl, entry); return false; }
 
-   // v1.45: If STH gives RR >= 1.5 → cap TP at exactly 1:2
+   // TP = nearest post-Asian swing high — use directly if RR >= 1.5
+   // Fallback to max(3R, Asian High) only when no valid STH found
    if(tp > entry)
    {
       double rawRRR = (tp - entry) / (entry - sl);
-      if(rawRRR >= 1.5)
-      {
-         tp = entry + 2.0 * (entry - sl);
-         PrintFormat("[Straight_Buy] STH RRR %.2f >= 1.5 — TP capped at 1:2: %.5f", rawRRR, tp);
-      }
-      else if(rawRRR < 1.5)
-      {
-         PrintFormat("[Straight_Buy] SKIP: STH RRR %.2f below 1.5 minimum", rawRRR);
-         return false;
-      }
+      if(rawRRR < 1.5)
+      { PrintFormat("[Straight_Buy] SKIP: STH RRR %.2f below 1.5 minimum", rawRRR); return false; }
+      PrintFormat("[Straight_Buy] STH RRR %.2f — TP set to swing high: %.5f", rawRRR, tp);
    }
+   else
    {
       double tp3R      = entry + 3.0 * (entry - sl);
       double tpAsianHi = (g_AsianHigh > entry) ? g_AsianHigh : 0;
@@ -2027,21 +2063,16 @@ bool TryStraightSell()
    if(sl <= entry)
    { PrintFormat("[Straight_Sell] SKIP: invalid SL %.5f vs entry %.5f", sl, entry); return false; }
 
-   // v1.45: If STL gives RR >= 1.5 → cap TP at exactly 1:2
+   // TP = nearest post-Asian swing low — use directly if RR >= 1.5
+   // Fallback to min(3R, Asian Low) only when no valid STL found
    if(tp > 0 && tp < entry)
    {
       double rawRRR = (entry - tp) / (sl - entry);
-      if(rawRRR >= 1.5)
-      {
-         tp = entry - 2.0 * (sl - entry);
-         PrintFormat("[Straight_Sell] STL RRR %.2f >= 1.5 — TP capped at 1:2: %.5f", rawRRR, tp);
-      }
-      else if(rawRRR < 1.5)
-      {
-         PrintFormat("[Straight_Sell] SKIP: STL RRR %.2f below 1.5 minimum", rawRRR);
-         return false;
-      }
+      if(rawRRR < 1.5)
+      { PrintFormat("[Straight_Sell] SKIP: STL RRR %.2f below 1.5 minimum", rawRRR); return false; }
+      PrintFormat("[Straight_Sell] STL RRR %.2f — TP set to swing low: %.5f", rawRRR, tp);
    }
+   else
    {
       double tp3R      = entry - 3.0 * (sl - entry);
       double tpAsianLo = (g_AsianLow > 0 && g_AsianLow < entry) ? g_AsianLow : tp3R;
