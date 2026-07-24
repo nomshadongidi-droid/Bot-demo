@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //|                       NomShadoNgidi_EA.mq5                       |
 //|            Expert Advisor — Nomshado Ngidi Trading Plan          |
-//|           Instrument: US30 / US_30 / US.30  |  Version 1.55        |
+//|           Instrument: US30 / US_30 / US.30  |  Version 1.56        |
 //+------------------------------------------------------------------+
 //
 //  ⚠ THIS EA WILL ONLY RUN ON US_30 (also accepted: US.30, US30)
@@ -10,6 +10,12 @@
 //  SETUP MODELS IMPLEMENTED:
 //  BUY  → FVG Asian Buy | FVG Buy | Straight Buy
 //  SELL → FVG Asian Sell | FVG Sell | Straight Sell
+//
+//  v1.56 CHANGES (from v1.55):
+//  • Added CheckBreakEven2R: when any open position reaches 2R profit (same day)
+//    → SL moves to entry immediately for all setups
+//  • Overnight break-even (CheckBreakEvenOvernight) unchanged — still moves SL
+//    to entry on next day if trade is in profit
 //
 //  v1.55 CHANGES (from v1.54):
 //  • Removed same-day 1.5R break-even (CheckStraightBreakEven) for all setups
@@ -553,6 +559,46 @@ void CancelPendingOrders()
       PrintFormat("[CancelPending] Cancelled %d pending order(s) at %02d:00 ET", cancelled, InpPendingCancelHour);
 }
 
+// CheckBreakEven2R — all setups, same day
+// When any open position reaches 2R profit → move SL to entry
+void CheckBreakEven2R()
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(!PositionSelectByTicket(ticket))               continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+
+      double entry   = PositionGetDouble(POSITION_PRICE_OPEN);
+      double sl      = PositionGetDouble(POSITION_SL);
+      double tp      = PositionGetDouble(POSITION_TP);
+      long   posType = PositionGetInteger(POSITION_TYPE);
+      double bid     = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      double ask     = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+
+      // Already at or past break-even
+      if(posType == POSITION_TYPE_BUY  && sl >= entry) continue;
+      if(posType == POSITION_TYPE_SELL && sl <= entry) continue;
+
+      double risk    = MathAbs(entry - sl);
+      double trigger = (posType == POSITION_TYPE_BUY) ? entry + 2.0 * risk
+                                                      : entry - 2.0 * risk;
+
+      bool hit = (posType == POSITION_TYPE_BUY)  ? (bid >= trigger) :
+                 (posType == POSITION_TYPE_SELL) ? (ask <= trigger) : false;
+
+      if(hit)
+      {
+         if(trade.PositionModify(ticket, entry, tp))
+            PrintFormat("[BE_2R] Ticket #%I64u — price reached 2R (%.5f) → SL moved to entry %.5f",
+                        ticket, trigger, entry);
+         else
+            PrintFormat("[BE_2R] FAILED to modify ticket #%I64u — error %d",
+                        ticket, GetLastError());
+      }
+   }
+}
+
 // CheckBreakEvenOvernight (v1.31)
 // If any open trade was opened on a PREVIOUS trading day AND is currently
 // in profit → move SL to entry price (break even)
@@ -610,6 +656,7 @@ void CheckBreakEvenOvernight()
 void OnTick()
 {
    CheckBreakEvenOvernight();
+   CheckBreakEven2R();
    CheckBalanceAlerts();
 
    if(!g_PendingsCancelledToday && CurrentHour() >= InpPendingCancelHour)
