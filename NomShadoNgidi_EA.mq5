@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //|                       NomShadoNgidi_EA.mq5                       |
 //|            Expert Advisor — Nomshado Ngidi Trading Plan          |
-//|           Instrument: US30 / US_30 / US.30  |  Version 1.56        |
+//|           Instrument: US30 / US_30 / US.30  |  Version 1.57        |
 //+------------------------------------------------------------------+
 //
 //  ⚠ THIS EA WILL ONLY RUN ON US_30 (also accepted: US.30, US30)
@@ -10,6 +10,12 @@
 //  SETUP MODELS IMPLEMENTED:
 //  BUY  → FVG Asian Buy | FVG Buy | Straight Buy
 //  SELL → FVG Asian Sell | FVG Sell | Straight Sell
+//
+//  v1.57 CHANGES (from v1.56):
+//  • Same-day BE trigger corrected from 2R to 1.5R — when price reaches 1.5R
+//    profit, SL moves to entry immediately
+//  • Overnight losing trade: now closed immediately instead of leaving SL unchanged
+//    (in-profit overnight trades still move SL to entry, unchanged)
 //
 //  v1.56 CHANGES (from v1.55):
 //  • Added CheckBreakEven2R: when any open position reaches 2R profit (same day)
@@ -581,8 +587,8 @@ void CheckBreakEven2R()
       if(posType == POSITION_TYPE_SELL && sl <= entry) continue;
 
       double risk    = MathAbs(entry - sl);
-      double trigger = (posType == POSITION_TYPE_BUY) ? entry + 2.0 * risk
-                                                      : entry - 2.0 * risk;
+      double trigger = (posType == POSITION_TYPE_BUY) ? entry + 1.5 * risk
+                                                      : entry - 1.5 * risk;
 
       bool hit = (posType == POSITION_TYPE_BUY)  ? (bid >= trigger) :
                  (posType == POSITION_TYPE_SELL) ? (ask <= trigger) : false;
@@ -590,19 +596,19 @@ void CheckBreakEven2R()
       if(hit)
       {
          if(trade.PositionModify(ticket, entry, tp))
-            PrintFormat("[BE_2R] Ticket #%I64u — price reached 2R (%.5f) → SL moved to entry %.5f",
+            PrintFormat("[BE_1.5R] Ticket #%I64u — price reached 1.5R (%.5f) → SL moved to entry %.5f",
                         ticket, trigger, entry);
          else
-            PrintFormat("[BE_2R] FAILED to modify ticket #%I64u — error %d",
+            PrintFormat("[BE_1.5R] FAILED to modify ticket #%I64u — error %d",
                         ticket, GetLastError());
       }
    }
 }
 
 // CheckBreakEvenOvernight (v1.31)
-// If any open trade was opened on a PREVIOUS trading day AND is currently
-// in profit → move SL to entry price (break even)
-// If in a loss → leave SL unchanged
+// If any open trade was opened on a PREVIOUS trading day:
+//   in profit → move SL to entry price (break even)
+//   at a loss → close the trade immediately
 
 void CheckBreakEvenOvernight()
 {
@@ -634,8 +640,11 @@ void CheckBreakEvenOvernight()
 
       if(!inProfit)
       {
-         PrintFormat("[BreakEven] Ticket #%I64u opened %s — in LOSS, SL unchanged at %.5f",
-                     ticket, TimeToString(openTime, TIME_DATE), currentSL);
+         PrintFormat("[BreakEven] Ticket #%I64u opened %s — in LOSS, closing trade",
+                     ticket, TimeToString(openTime, TIME_DATE));
+         if(!trade.PositionClose(ticket))
+            PrintFormat("[BreakEven] FAILED to close ticket #%I64u — error %d",
+                        ticket, GetLastError());
          continue;
       }
 
