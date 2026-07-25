@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //|                       NomShadoNgidi_EA.mq5                       |
 //|            Expert Advisor — Nomshado Ngidi Trading Plan          |
-//|           Instrument: US30 / US_30 / US.30  |  Version 1.57        |
+//|           Instrument: US30 / US_30 / US.30  |  Version 1.58        |
 //+------------------------------------------------------------------+
 //
 //  ⚠ THIS EA WILL ONLY RUN ON US_30 (also accepted: US.30, US30)
@@ -10,6 +10,11 @@
 //  SETUP MODELS IMPLEMENTED:
 //  BUY  → FVG Asian Buy | FVG Buy | Straight Buy
 //  SELL → FVG Asian Sell | FVG Sell | Straight Sell
+//
+//  v1.58 CHANGES (from v1.57):
+//  • Same-day BE trigger changed to 50% of entry→TP distance (midpoint)
+//    e.g. 1:7R trade → triggers at 3.5R; 1:2R trade → triggers at 1R
+//    SL moves to entry the moment price reaches the midpoint between entry and TP
 //
 //  v1.57 CHANGES (from v1.56):
 //  • Same-day BE trigger corrected from 2R to 1.5R — when price reaches 1.5R
@@ -565,9 +570,10 @@ void CancelPendingOrders()
       PrintFormat("[CancelPending] Cancelled %d pending order(s) at %02d:00 ET", cancelled, InpPendingCancelHour);
 }
 
-// CheckBreakEven2R — all setups, same day
-// When any open position reaches 2R profit → move SL to entry
-void CheckBreakEven2R()
+// CheckBreakEvenMidpoint — all setups, same day
+// When price reaches 50% of the way from entry to TP → move SL to entry
+// e.g. 1:7R trade → triggers at 3.5R (midpoint between entry and TP)
+void CheckBreakEvenMidpoint()
 {
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
@@ -582,24 +588,26 @@ void CheckBreakEven2R()
       double bid     = SymbolInfoDouble(_Symbol, SYMBOL_BID);
       double ask     = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
 
+      if(tp <= 0) continue; // no TP set
+
       // Already at or past break-even
       if(posType == POSITION_TYPE_BUY  && sl >= entry) continue;
       if(posType == POSITION_TYPE_SELL && sl <= entry) continue;
 
-      double risk    = MathAbs(entry - sl);
-      double trigger = (posType == POSITION_TYPE_BUY) ? entry + 1.5 * risk
-                                                      : entry - 1.5 * risk;
+      // Trigger = midpoint between entry and TP
+      double trigger = (entry + tp) / 2.0;
 
       bool hit = (posType == POSITION_TYPE_BUY)  ? (bid >= trigger) :
                  (posType == POSITION_TYPE_SELL) ? (ask <= trigger) : false;
 
       if(hit)
       {
+         double pct = MathAbs(trigger - entry) / MathAbs(entry - sl);
          if(trade.PositionModify(ticket, entry, tp))
-            PrintFormat("[BE_1.5R] Ticket #%I64u — price reached 1.5R (%.5f) → SL moved to entry %.5f",
-                        ticket, trigger, entry);
+            PrintFormat("[BE_Mid] Ticket #%I64u — price at 50%% to TP (%.5f, %.1fR) → SL moved to entry %.5f",
+                        ticket, trigger, pct, entry);
          else
-            PrintFormat("[BE_1.5R] FAILED to modify ticket #%I64u — error %d",
+            PrintFormat("[BE_Mid] FAILED to modify ticket #%I64u — error %d",
                         ticket, GetLastError());
       }
    }
@@ -665,7 +673,7 @@ void CheckBreakEvenOvernight()
 void OnTick()
 {
    CheckBreakEvenOvernight();
-   CheckBreakEven2R();
+   CheckBreakEvenMidpoint();
    CheckBalanceAlerts();
 
    if(!g_PendingsCancelledToday && CurrentHour() >= InpPendingCancelHour)
