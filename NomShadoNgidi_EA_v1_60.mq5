@@ -12,11 +12,9 @@
 //  SELL → FVG Asian Sell | FVG Sell | Straight Sell
 //
 //  v1.60 CHANGES (from v1.59):
-//  • Straight Buy / Sell: removed bar[1] direction requirement
-//    Previously: Straight Buy needed bar[1] bullish; Straight Sell needed bar[1] bearish
-//    This blocked valid fake-breakout entries (Asian High sweeps UP → you SELL, but
-//    bars are bullish during the sweep so it never triggered)
-//    Now: the Asian break itself is the signal — enter immediately in the kill zone
+//  • Straight Buy / Sell window extended: bar[1] can now close at 10:00 ET
+//    Previously hourNY > 9 blocked the 09:00–10:00 candle from triggering entry
+//    Now hourNY > 10 allows entry at the 10:00 open based on the 09:00 close bar
 //
 //  v1.59 CHANGES (from v1.58):
 //  • CalcLotSize: enforce minimum 0.1 lot step (BlackBull only accepts 0.1 increments)
@@ -1726,12 +1724,18 @@ bool TryStraightBuy()
    if(AsianBreakDirection() != 1)
    { Print("[Straight_Buy] SKIP: Asian Low not broken first"); return false; }
 
-   // Only fire on candles closing 06:00–09:00 ET (last valid entry at 10:00 open)
+   // Fire on candles closing 06:00–10:00 ET (bar[1] closes at 10:00 → entry at 10:00 open)
    int hourNY = CurrentHour();
-   if(hourNY < 6 || hourNY > 9)
-   { PrintFormat("[Straight_Buy] SKIP: outside 06:00–09:00 close window (now %d:00)", hourNY); return false; }
+   if(hourNY < 6 || hourNY > 10)
+   { PrintFormat("[Straight_Buy] SKIP: outside 06:00–10:00 close window (now %d:00)", hourNY); return false; }
 
-   PrintFormat("[Straight_Buy] Trigger: Asian Low broken, in window at %d:00 ET", hourNY);
+   // Bar[1] must close bullish (close > open)
+   double bar1Open  = iOpen (_Symbol, PERIOD_H1, 1);
+   double bar1Close = iClose(_Symbol, PERIOD_H1, 1);
+   if(bar1Close <= bar1Open)
+   { Print("[Straight_Buy] SKIP: bar[1] not bullish"); return false; }
+
+   PrintFormat("[Straight_Buy] Trigger: bar[1] bullish close=%.5f open=%.5f at %d:00 ET", bar1Close, bar1Open, hourNY);
 
    double entry = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
 
@@ -2010,12 +2014,18 @@ bool TryStraightSell()
    if(AsianBreakDirection() != -1)
    { Print("[Straight_Sell] SKIP: Asian High not broken first"); return false; }
 
-   // Only fire on candles closing 06:00–09:00 ET (last valid entry at 10:00 open)
+   // Fire on candles closing 06:00–10:00 ET (bar[1] closes at 10:00 → entry at 10:00 open)
    int hourNY = CurrentHour();
-   if(hourNY < 6 || hourNY > 9)
-   { PrintFormat("[Straight_Sell] SKIP: outside 06:00–09:00 close window (now %d:00)", hourNY); return false; }
+   if(hourNY < 6 || hourNY > 10)
+   { PrintFormat("[Straight_Sell] SKIP: outside 06:00–10:00 close window (now %d:00)", hourNY); return false; }
 
-   PrintFormat("[Straight_Sell] Trigger: Asian High broken, in window at %d:00 ET", hourNY);
+   // Bar[1] must close bearish (close < open)
+   double bar1Open  = iOpen (_Symbol, PERIOD_H1, 1);
+   double bar1Close = iClose(_Symbol, PERIOD_H1, 1);
+   if(bar1Close >= bar1Open)
+   { Print("[Straight_Sell] SKIP: bar[1] not bearish"); return false; }
+
+   PrintFormat("[Straight_Sell] Trigger: bar[1] bearish close=%.5f open=%.5f at %d:00 ET", bar1Close, bar1Open, hourNY);
 
    double entry = SymbolInfoDouble(_Symbol, SYMBOL_BID);
 
