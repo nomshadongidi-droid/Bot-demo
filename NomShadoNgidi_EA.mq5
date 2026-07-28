@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //|                       NomShadoNgidi_EA.mq5                       |
 //|            Expert Advisor — Nomshado Ngidi Trading Plan          |
-//|           Instrument: US30 / US_30 / US.30  |  Version 1.60        |
+//|           Instrument: US30 / US_30 / US.30  |  Version 1.59        |
 //+------------------------------------------------------------------+
 //
 //  ⚠ THIS EA WILL ONLY RUN ON US_30 (also accepted: US.30, US30)
@@ -10,13 +10,6 @@
 //  SETUP MODELS IMPLEMENTED:
 //  BUY  → FVG Asian Buy | FVG Buy | Straight Buy
 //  SELL → FVG Asian Sell | FVG Sell | Straight Sell
-//
-//  v1.60 CHANGES (from v1.59):
-//  • Straight Buy / Sell: removed bar[1] direction requirement
-//    Previously: Straight Buy needed bar[1] bullish; Straight Sell needed bar[1] bearish
-//    This blocked valid fake-breakout entries (Asian High sweeps UP → you SELL, but
-//    bars are bullish during the sweep so it never triggered)
-//    Now: the Asian break itself is the signal — enter immediately in the kill zone
 //
 //  v1.59 CHANGES (from v1.58):
 //  • CalcLotSize: enforce minimum 0.1 lot step (BlackBull only accepts 0.1 increments)
@@ -392,7 +385,7 @@ int OnInit()
    trade.SetDeviationInPoints(20);
    trade.SetTypeFilling(ORDER_FILLING_FOK);
 
-   PrintFormat("=== Nomshado Ngidi EA v1.60 Initialised ===");
+   PrintFormat("=== Nomshado Ngidi EA v1.59 Initialised ===");
    PrintFormat("Symbol: %s | Pip Size: %.5f", _Symbol, g_PipSize);
    PrintFormat("Risk per trade: Balance / 6 (%.2f%%) | Min RRR 1:%.1f", 100.0/6.0, InpMinRRR);
    PrintFormat("London KZ: %02d:00 | NY KZ: %02d:00–%02d:00",
@@ -1731,7 +1724,13 @@ bool TryStraightBuy()
    if(hourNY < 6 || hourNY > 9)
    { PrintFormat("[Straight_Buy] SKIP: outside 06:00–09:00 close window (now %d:00)", hourNY); return false; }
 
-   PrintFormat("[Straight_Buy] Trigger: Asian Low broken, in window at %d:00 ET", hourNY);
+   // Bar[1] must close bullish (close > open)
+   double bar1Open  = iOpen (_Symbol, PERIOD_H1, 1);
+   double bar1Close = iClose(_Symbol, PERIOD_H1, 1);
+   if(bar1Close <= bar1Open)
+   { Print("[Straight_Buy] SKIP: bar[1] not bullish"); return false; }
+
+   PrintFormat("[Straight_Buy] Trigger: bar[1] bullish close=%.5f open=%.5f at %d:00 ET", bar1Close, bar1Open, hourNY);
 
    double entry = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
 
@@ -2015,7 +2014,13 @@ bool TryStraightSell()
    if(hourNY < 6 || hourNY > 9)
    { PrintFormat("[Straight_Sell] SKIP: outside 06:00–09:00 close window (now %d:00)", hourNY); return false; }
 
-   PrintFormat("[Straight_Sell] Trigger: Asian High broken, in window at %d:00 ET", hourNY);
+   // Bar[1] must close bearish (close < open)
+   double bar1Open  = iOpen (_Symbol, PERIOD_H1, 1);
+   double bar1Close = iClose(_Symbol, PERIOD_H1, 1);
+   if(bar1Close >= bar1Open)
+   { Print("[Straight_Sell] SKIP: bar[1] not bearish"); return false; }
+
+   PrintFormat("[Straight_Sell] Trigger: bar[1] bearish close=%.5f open=%.5f at %d:00 ET", bar1Close, bar1Open, hourNY);
 
    double entry = SymbolInfoDouble(_Symbol, SYMBOL_BID);
 
