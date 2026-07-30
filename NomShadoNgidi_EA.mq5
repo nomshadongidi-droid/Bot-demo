@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //|                       NomShadoNgidi_EA.mq5                       |
 //|            Expert Advisor — Nomshado Ngidi Trading Plan          |
-//|           Instrument: US30 / US_30 / US.30  |  Version 1.62        |
+//|           Instrument: US30 / US_30 / US.30  |  Version 1.63        |
 //+------------------------------------------------------------------+
 //
 //  ⚠ THIS EA WILL ONLY RUN ON US_30 (also accepted: US.30, US30)
@@ -10,6 +10,13 @@
 //  SETUP MODELS IMPLEMENTED:
 //  BUY  → FVG Asian Buy | FVG Buy | Straight Buy
 //  SELL → FVG Asian Sell | FVG Sell | Straight Sell
+//
+//  v1.63 CHANGES (from v1.62):
+//  • Scale-in: when BlackBull margin caps the initial lot size below the
+//    intended size, the bot adds more lots as floating profit frees up margin.
+//    All add-ons use the same SL and TP as the original position.
+//    Enable/disable via InpScaleIn input. Target lot size is stored before
+//    the margin cap and reset each trading day.
 //
 //  v1.62 CHANGES (from v1.61):
 //  • Break-even trigger changed from 50% to 65% of entry→TP distance
@@ -278,8 +285,8 @@
 //
 //+------------------------------------------------------------------+
 #property copyright   "Nomshado Ngidi"
-#property version     "1.50"
-#property description "MT5 EA — Nomshado Ngidi Trading Plan v1.50"
+#property version     "1.63"
+#property description "MT5 EA — Nomshado Ngidi Trading Plan v1.63"
 #property description "⚠ Instrument: US30 / US_30 / US.30 ONLY"
 #property description "Setups: FVG Buy/Sell, Asian FVG, Straight Buy/Sell"
 
@@ -313,6 +320,7 @@ input int    InpTradingEndNY          = 10;  // Trading Window End — NY time (
 input group "=== Risk Management ==="
 // Risk per trade = balance / 6 (hardcoded per trading plan)
 input double InpMinRRR         = 2.0;  // Minimum Risk:Reward Ratio (1:2)
+input bool   InpScaleIn        = true; // Scale into position as profit frees margin
 
 input group "=== Stop Loss Settings ==="
 input int    InpFVGBuffer      = 5;    // SL/entry buffer in pips
@@ -373,6 +381,8 @@ bool     g_StraightBuyDone         = false;
 bool     g_FVGSellDone             = false;
 bool     g_StraightSellDone        = false;
 
+double   g_TargetLots              = 0;  // intended lots before margin cap (for scale-in)
+
 bool     g_AsianSellSLHit          = false;
 bool     g_AsianSellReentered      = false;
 bool     g_PendingsCancelledToday  = false;
@@ -400,7 +410,7 @@ int OnInit()
    trade.SetDeviationInPoints(20);
    trade.SetTypeFilling(ORDER_FILLING_FOK);
 
-   PrintFormat("=== Nomshado Ngidi EA v1.62 Initialised ===");
+   PrintFormat("=== Nomshado Ngidi EA v1.63 Initialised ===");
    PrintFormat("Symbol: %s | Pip Size: %.5f", _Symbol, g_PipSize);
    PrintFormat("Risk per trade: Balance / 6 (%.2f%%) | Min RRR 1:%.1f", 100.0/6.0, InpMinRRR);
    PrintFormat("London KZ: %02d:00 | NY KZ: %02d:00–%02d:00",
@@ -685,6 +695,87 @@ void CheckBreakEvenOvernight()
    }
 }
 
+// CheckScaleIn (v1.63)
+// After the initial position is opened, if the intended lot size was capped by
+// broker margin, this function adds more lots whenever profit frees up enough
+// margin — until the total position equals the originally intended lot size.
+// All add-ons share the same SL and TP as the first open position.
+void CheckScaleIn()
+{
+   if(!InpScaleIn)      return;
+   if(g_TargetLots <= 0) return;
+
+   // Gather info from open positions
+   double totalLots = 0;
+   long   direction = -999;
+   double firstSL   = 0;
+   double firstTP   = 0;
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(!PositionSelectByTicket(ticket))                          continue;
+      if(PositionGetString (POSITION_SYMBOL) != _Symbol)          continue;
+      if(PositionGetInteger(POSITION_MAGIC)  != InpMagicNumber)   continue;
+
+      totalLots += PositionGetDouble(POSITION_VOLUME);
+      if(direction == -999)
+      {
+         direction = PositionGetInteger(POSITION_TYPE);
+         firstSL   = PositionGetDouble(POSITION_SL);
+         firstTP   = PositionGetDouble(POSITION_TP);
+      }
+   }
+
+   if(totalLots <= 0 || direction == -999) return;  // no open position
+   if(totalLots >= g_TargetLots - 0.05)   return;   // already at or near target
+
+   double effectiveStep = MathMax(SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP), 0.1);
+   double minLot        = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+
+   // How many more lots are still needed
+   double neededLots = NormalizeDouble(
+      MathRound((g_TargetLots - totalLots) / effectiveStep) * effectiveStep, 1);
+   if(neededLots < minLot) return;
+
+   // Check how many lots current free margin can afford
+   double marginPerLot = SymbolInfoDouble(_Symbol, SYMBOL_MARGIN_INITIAL);
+   if(marginPerLot <= 0)
+   {
+      double price        = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      double contractSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
+      if(contractSize <= 0) contractSize = 1;
+      double leverage = (double)AccountInfoInteger(ACCOUNT_LEVERAGE);
+      if(leverage <= 0) leverage = 100;
+      marginPerLot = (price * contractSize) / leverage;
+   }
+   if(marginPerLot <= 0) return;
+
+   double freeMargin    = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
+   double maxAffordable = NormalizeDouble(
+      MathFloor((freeMargin * 0.9) / marginPerLot / effectiveStep) * effectiveStep, 1);
+   if(maxAffordable < minLot) return;  // not enough margin yet
+
+   double addLots = NormalizeDouble(
+      MathRound(MathMin(neededLots, maxAffordable) / effectiveStep) * effectiveStep, 1);
+   if(addLots < minLot) return;
+
+   PrintFormat("[ScaleIn] Open=%.1f Target=%.1f Adding=%.1f (freeMargin=%.2f marginPerLot=%.2f)",
+               totalLots, g_TargetLots, addLots, freeMargin, marginPerLot);
+
+   bool ok = false;
+   if(direction == POSITION_TYPE_BUY)
+      ok = trade.Buy (addLots, _Symbol, 0, firstSL, firstTP, "ScaleIn");
+   else if(direction == POSITION_TYPE_SELL)
+      ok = trade.Sell(addLots, _Symbol, 0, firstSL, firstTP, "ScaleIn");
+
+   if(ok)
+      PrintFormat("[ScaleIn] Added %.1f lots — total now ~%.1f / %.1f target",
+                  addLots, totalLots + addLots, g_TargetLots);
+   else
+      PrintFormat("[ScaleIn] FAILED to add %.1f lots — error %d", addLots, GetLastError());
+}
+
 //============================================================
 //  MAIN TICK
 //============================================================
@@ -693,6 +784,7 @@ void OnTick()
 {
    CheckBreakEvenOvernight();
    CheckBreakEvenMidpoint();
+   CheckScaleIn();
    CheckBalanceAlerts();
 
    if(!g_PendingsCancelledToday && CurrentHour() >= InpPendingCancelHour)
@@ -836,6 +928,7 @@ void ResetDailyCount()
       g_AsianSellSLHit          = false;
       g_AsianSellReentered      = false;
       g_PendingsCancelledToday  = false;
+      g_TargetLots              = 0;
    }
 }
 
@@ -865,6 +958,9 @@ double CalcLotSize(double slPips)
    double effectiveStep = MathMax(step, 0.1);
    lots = NormalizeDouble(MathRound(lots / effectiveStep) * effectiveStep, 1);
    lots = MathMax(minLot, MathMin(maxLot, lots));
+
+   // v1.63: save intended lot size before margin cap for scale-in
+   g_TargetLots = lots;
 
    // v1.25: cap lots to what margin can actually afford (handles 1:100 effective margin on indices)
    double marginPerLot = SymbolInfoDouble(_Symbol, SYMBOL_MARGIN_INITIAL);
