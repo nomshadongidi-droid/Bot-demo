@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //|                       NomShadoNgidi_EA.mq5                       |
 //|            Expert Advisor — Nomshado Ngidi Trading Plan          |
-//|           Instrument: US30 / US_30 / US.30  |  Version 1.64        |
+//|           Instrument: US30 / US_30 / US.30  |  Version 1.65        |
 //+------------------------------------------------------------------+
 //
 //  ⚠ THIS EA WILL ONLY RUN ON US_30 (also accepted: US.30, US30)
@@ -10,6 +10,11 @@
 //  SETUP MODELS IMPLEMENTED:
 //  BUY  → FVG Asian Buy | FVG Buy | Straight Buy
 //  SELL → FVG Asian Sell | FVG Sell | Straight Sell
+//
+//  v1.65 CHANGES (from v1.64):
+//  • FVG Buy restricted to London KZ only (02:00–06:00 ET)
+//    Backtest data: London FVG Buy = 56% WR vs NY FVG Buy = 31% WR (flat ROI)
+//    FVG Sell unchanged — NY FVG Sell is the strongest sub-category (62% WR)
 //
 //  v1.64 CHANGES (from v1.63):
 //  • CalcLotSize: replaced SYMBOL_MARGIN_INITIAL with OrderCalcMargin() for
@@ -293,8 +298,8 @@
 //
 //+------------------------------------------------------------------+
 #property copyright   "Nomshado Ngidi"
-#property version     "1.64"
-#property description "MT5 EA — Nomshado Ngidi Trading Plan v1.64"
+#property version     "1.65"
+#property description "MT5 EA — Nomshado Ngidi Trading Plan v1.65"
 #property description "⚠ Instrument: US30 / US_30 / US.30 ONLY"
 #property description "Setups: FVG Buy/Sell, Asian FVG, Straight Buy/Sell"
 
@@ -418,7 +423,7 @@ int OnInit()
    trade.SetDeviationInPoints(20);
    trade.SetTypeFilling(ORDER_FILLING_FOK);
 
-   PrintFormat("=== Nomshado Ngidi EA v1.64 Initialised ===");
+   PrintFormat("=== Nomshado Ngidi EA v1.65 Initialised ===");
    PrintFormat("Symbol: %s | Pip Size: %.5f", _Symbol, g_PipSize);
    PrintFormat("Risk per trade: Balance / 6 (%.2f%%) | Min RRR 1:%.1f", 100.0/6.0, InpMinRRR);
    PrintFormat("London KZ: %02d:00 | NY KZ: %02d:00–%02d:00",
@@ -1570,8 +1575,8 @@ bool ScanBuySetups()
    int  hr        = CurrentHour();
    bool triggered = false;
 
-   // Priority 1: FVG Buy — London + NY KZ (02:00–10:00)
-   if(!triggered && hr >= InpLondonStartNY && hr < InpTradingEndNY)
+   // v1.65: FVG Buy — London KZ only (02:00–06:00). Backtest: 56% WR London vs 31% NY.
+   if(!triggered && hr >= InpLondonStartNY && hr < InpNYKillZoneNY)
       triggered = TryFVGBuy();
 
    // Priority 3: Straight Buy — NY KZ only (05:00–10:00)
