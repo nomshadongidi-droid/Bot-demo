@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //|                       NomShadoNgidi_EA.mq5                       |
 //|            Expert Advisor — Nomshado Ngidi Trading Plan          |
-//|           Instrument: US30 / US_30 / US.30  |  Version 1.63        |
+//|           Instrument: US30 / US_30 / US.30  |  Version 1.64        |
 //+------------------------------------------------------------------+
 //
 //  ⚠ THIS EA WILL ONLY RUN ON US_30 (also accepted: US.30, US30)
@@ -10,6 +10,14 @@
 //  SETUP MODELS IMPLEMENTED:
 //  BUY  → FVG Asian Buy | FVG Buy | Straight Buy
 //  SELL → FVG Asian Sell | FVG Sell | Straight Sell
+//
+//  v1.64 CHANGES (from v1.63):
+//  • CalcLotSize: replaced SYMBOL_MARGIN_INITIAL with OrderCalcMargin() for
+//    the margin cap. SYMBOL_MARGIN_INITIAL returns 0 on BlackBull demo accounts,
+//    causing the fallback to use stated 1:500 leverage (~$105/lot) instead of the
+//    real ~$522/lot — so 20+ lots were attempted and rejected with "No money."
+//    OrderCalcMargin() asks MT5 directly and always returns the real charge.
+//    Same fix applied in CheckScaleIn().
 //
 //  v1.63 CHANGES (from v1.62):
 //  • Scale-in: when BlackBull margin caps the initial lot size below the
@@ -285,8 +293,8 @@
 //
 //+------------------------------------------------------------------+
 #property copyright   "Nomshado Ngidi"
-#property version     "1.63"
-#property description "MT5 EA — Nomshado Ngidi Trading Plan v1.63"
+#property version     "1.64"
+#property description "MT5 EA — Nomshado Ngidi Trading Plan v1.64"
 #property description "⚠ Instrument: US30 / US_30 / US.30 ONLY"
 #property description "Setups: FVG Buy/Sell, Asian FVG, Straight Buy/Sell"
 
@@ -410,7 +418,7 @@ int OnInit()
    trade.SetDeviationInPoints(20);
    trade.SetTypeFilling(ORDER_FILLING_FOK);
 
-   PrintFormat("=== Nomshado Ngidi EA v1.63 Initialised ===");
+   PrintFormat("=== Nomshado Ngidi EA v1.64 Initialised ===");
    PrintFormat("Symbol: %s | Pip Size: %.5f", _Symbol, g_PipSize);
    PrintFormat("Risk per trade: Balance / 6 (%.2f%%) | Min RRR 1:%.1f", 100.0/6.0, InpMinRRR);
    PrintFormat("London KZ: %02d:00 | NY KZ: %02d:00–%02d:00",
@@ -738,8 +746,11 @@ void CheckScaleIn()
       MathRound((g_TargetLots - totalLots) / effectiveStep) * effectiveStep, 1);
    if(neededLots < minLot) return;
 
-   // Check how many lots current free margin can afford
-   double marginPerLot = SymbolInfoDouble(_Symbol, SYMBOL_MARGIN_INITIAL);
+   // Check how many lots current free margin can afford (v1.64: use OrderCalcMargin)
+   double marginPerLot = 0;
+   OrderCalcMargin(ORDER_TYPE_BUY, _Symbol, 1.0, SymbolInfoDouble(_Symbol, SYMBOL_ASK), marginPerLot);
+   if(marginPerLot <= 0)
+      marginPerLot = SymbolInfoDouble(_Symbol, SYMBOL_MARGIN_INITIAL);
    if(marginPerLot <= 0)
    {
       double price        = SymbolInfoDouble(_Symbol, SYMBOL_BID);
@@ -962,11 +973,16 @@ double CalcLotSize(double slPips)
    // v1.63: save intended lot size before margin cap for scale-in
    g_TargetLots = lots;
 
-   // v1.25: cap lots to what margin can actually afford (handles 1:100 effective margin on indices)
-   double marginPerLot = SymbolInfoDouble(_Symbol, SYMBOL_MARGIN_INITIAL);
+   // v1.64: use OrderCalcMargin() — asks MT5 for the real margin it will charge per lot.
+   // SYMBOL_MARGIN_INITIAL returns 0 on BlackBull demo accounts, causing the price/leverage
+   // fallback to underestimate by 5x (uses stated 1:500 vs real 1:100 effective leverage).
+   // OrderCalcMargin() bypasses all of that and gives the true broker charge.
+   double marginPerLot = 0;
+   OrderCalcMargin(ORDER_TYPE_BUY, _Symbol, 1.0, SymbolInfoDouble(_Symbol, SYMBOL_ASK), marginPerLot);
+   if(marginPerLot <= 0)
+      marginPerLot = SymbolInfoDouble(_Symbol, SYMBOL_MARGIN_INITIAL);
    if(marginPerLot <= 0)
    {
-      // fallback: estimate from price and leverage
       double price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
       double leverage = (double)AccountInfoInteger(ACCOUNT_LEVERAGE);
       if(leverage <= 0) leverage = 100;
