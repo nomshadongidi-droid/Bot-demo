@@ -753,7 +753,8 @@ void CheckScaleIn()
 
    // Check how many lots current free margin can afford (v1.64: use OrderCalcMargin)
    double marginPerLot = 0;
-   OrderCalcMargin(ORDER_TYPE_BUY, _Symbol, 1.0, SymbolInfoDouble(_Symbol, SYMBOL_ASK), marginPerLot);
+   if(!OrderCalcMargin(ORDER_TYPE_BUY, _Symbol, 1.0, SymbolInfoDouble(_Symbol, SYMBOL_ASK), marginPerLot))
+      marginPerLot = 0;
    if(marginPerLot <= 0)
       marginPerLot = SymbolInfoDouble(_Symbol, SYMBOL_MARGIN_INITIAL);
    if(marginPerLot <= 0)
@@ -983,7 +984,8 @@ double CalcLotSize(double slPips)
    // fallback to underestimate by 5x (uses stated 1:500 vs real 1:100 effective leverage).
    // OrderCalcMargin() bypasses all of that and gives the true broker charge.
    double marginPerLot = 0;
-   OrderCalcMargin(ORDER_TYPE_BUY, _Symbol, 1.0, SymbolInfoDouble(_Symbol, SYMBOL_ASK), marginPerLot);
+   if(!OrderCalcMargin(ORDER_TYPE_BUY, _Symbol, 1.0, SymbolInfoDouble(_Symbol, SYMBOL_ASK), marginPerLot))
+      marginPerLot = 0;
    if(marginPerLot <= 0)
       marginPerLot = SymbolInfoDouble(_Symbol, SYMBOL_MARGIN_INITIAL);
    if(marginPerLot <= 0)
