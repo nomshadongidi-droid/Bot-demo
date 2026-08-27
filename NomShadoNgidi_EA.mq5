@@ -554,7 +554,7 @@ int OnInit()
 {
    if(StringFind(_Symbol, "US.30") < 0 && StringFind(_Symbol, "US30") < 0 && StringFind(_Symbol, "US_30") < 0)
    {
-      string errMsg = "WRONG SYMBOL: This EA trades US.30 only. Current chart is " + _Symbol;
+      string errMsg = "WRONG SYMBOL: This EA trades US30 only. Current chart is " + _Symbol;
       Alert(errMsg);
       Print(errMsg);
       return INIT_FAILED;
