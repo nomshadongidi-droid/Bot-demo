@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //|                       NomShadoNgidi_EA.mq5                       |
 //|            Expert Advisor — Nomshado Ngidi Trading Plan          |
-//|           Instrument: US30 / US_30 / US.30  |  Version 1.97        |
+//|           Instrument: US30 / US_30 / US.30  |  Version 1.96        |
 //+------------------------------------------------------------------+
 //
 //  ⚠ THIS EA WILL ONLY RUN ON US_30 (also accepted: US.30, US30)
@@ -10,19 +10,6 @@
 //  SETUP MODELS IMPLEMENTED:
 //  BUY  → FVG Asian Buy | FVG Buy | Straight Buy
 //  SELL → FVG Asian Sell | FVG Sell | Straight Sell
-//
-//  v1.97 CHANGES (from v1.96):
-//  • TryStraightBuy / TryStraightSell: the v1.96 3-tier entry rework only touched
-//    TryFVGBuy/TryFVGSell — these two functions still always entered at the current
-//    market price, using the 1.5 minimum only as a skip/no-skip gate on the STH/STL TP
-//    choice, never as a market-vs-limit-order split. Confirmed live: a Straight_Buy fired
-//    at RRR 1.53 (inside the 1.5–2.0 band) as a straight market order instead of a
-//    BuyLimit at the math-derived 1:2 price. Both functions now use the exact same
-//    3-tier structure as TryFVGBuy/TryFVGSell:
-//      RR >= 2.0 at current market price → enter now, wherever price is
-//      1.5 <= RR < 2.0 → limit order at a math-derived price giving exactly 1:2 RR
-//                         (entry12 = (tp + 2*sl)/3)
-//      RR <  1.5 → skip
 //
 //  v1.96 CHANGES (from v1.95):
 //  • TryFVGBuy / TryFVGSell: removed the v1.90/v1.91 "wait for a retrace into the FVG
@@ -609,8 +596,8 @@
 //
 //+------------------------------------------------------------------+
 #property copyright   "Nomshado Ngidi"
-#property version     "1.97"
-#property description "MT5 EA — Nomshado Ngidi Trading Plan v1.97"
+#property version     "1.96"
+#property description "MT5 EA — Nomshado Ngidi Trading Plan v1.96"
 #property description "⚠ Instrument: US30 / US_30 / US.30 ONLY"
 #property description "Setups: FVG Buy/Sell, Asian FVG, Straight Buy/Sell"
 
@@ -2255,12 +2242,11 @@ bool TryFVGBuy()
    return ok;
 }
 
-// Straight Buy (v1.97 rework)
+// Straight Buy (v1.32 rework)
 // Trigger : Asian Low broken first (01:00 ET onwards)
 //           + any candle 05:00–10:00 ET closes bullish
 //           + no FVG Buy has fired yet since 01:00 ET
-// Entry   : same 3-tier structure as FVG Buy/Sell — RR >= 2.0 enters at market now,
-//           1.5 <= RR < 2.0 places a BuyLimit at the math-derived 1:2 price, RR < 1.5 skips
+// Entry   : market order immediately when bullish candle closes
 // SL      : lowest low of bar[1] and bar[2] minus buffer
 // TP      : actual STH, fallback to higher of 3R or Asian High
 bool TryStraightBuy()
@@ -2285,68 +2271,46 @@ bool TryStraightBuy()
 
    PrintFormat("[Straight_Buy] Trigger: bar[1] bullish close=%.5f open=%.5f at %d:00 ET", bar1Close, bar1Open, hourNY);
 
-   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double entry = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
 
    // SL = lowest low of bar[1] and bar[2] minus buffer
    double low1 = iLow(_Symbol, PERIOD_H1, 1);
    double low2 = iLow(_Symbol, PERIOD_H1, 2);
    double sl   = MathMin(low1, low2) - PipsToPrice(InpFVGBuffer);
-   double tp   = GetSTHigh(ask, InpSTH_Lookback);
+   double tp   = GetSTHigh(entry, InpSTH_Lookback);
 
-   if(sl <= 0 || sl >= ask)
-   { PrintFormat("[Straight_Buy] SKIP: invalid SL %.5f vs entry %.5f", sl, ask); return false; }
+   if(sl <= 0 || sl >= entry)
+   { PrintFormat("[Straight_Buy] SKIP: invalid SL %.5f vs entry %.5f", sl, entry); return false; }
 
-   // TP = nearest post-Asian swing high; fallback to max(3R, Asian High) if none found
-   if(tp > ask)
+   // TP = nearest post-Asian swing high — use directly if RR >= 1.5
+   // Fallback to max(3R, Asian High) only when no valid STH found
+   if(tp > entry)
    {
-      PrintFormat("[Straight_Buy] TP set to swing high: %.5f", tp);
+      double rawRRR = (tp - entry) / (entry - sl);
+      if(rawRRR < 1.5)
+      { PrintFormat("[Straight_Buy] SKIP: STH RRR %.2f below 1.5 minimum", rawRRR); return false; }
+      PrintFormat("[Straight_Buy] STH RRR %.2f — TP set to swing high: %.5f", rawRRR, tp);
    }
    else
    {
-      double tp3R      = ask + 3.0 * (ask - sl);
-      double tpAsianHi = (g_AsianHigh > ask) ? g_AsianHigh : 0;
+      double tp3R      = entry + 3.0 * (entry - sl);
+      double tpAsianHi = (g_AsianHigh > entry) ? g_AsianHigh : 0;
       tp = MathMax(tp3R, tpAsianHi);
       PrintFormat("[Straight_Buy] No STH — fallback TP: 3R=%.5f AsianHigh=%.5f → using %.5f", tp3R, tpAsianHi, tp);
    }
 
    // v1.94: mirror of Straight_Sell's all-bullish-Asian override — if all Asian session
    // candles were bearish, TP overridden to Asian High
-   if(g_AllAsianBearish && g_AsianHigh > ask)
+   if(g_AllAsianBearish && g_AsianHigh > entry)
    {
       tp = g_AsianHigh;
       PrintFormat("[Straight_Buy] All-bear Asian session — TP overridden to Asian High: %.5f", tp);
    }
 
-   // v1.97: same 3-tier entry structure as TryFVGBuy/TryFVGSell — this function was still
-   // always entering at market regardless of RRR, only using the 1.5 threshold as a
-   // skip/no-skip gate. Now:
-   //   RR >= 2.0 at current market price → enter now, wherever price is
-   //   1.5 <= RR < 2.0 → BuyLimit at a math-derived price giving exactly 1:2 RR
-   //   RR <  1.5 → skip
-   double rrr = (tp - ask) / (ask - sl);
+   PrintFormat("[Straight_Buy] entry=%.5f sl=%.5f tp=%.5f RRR=%.2f",
+               entry, sl, tp, (entry - sl > 0) ? (tp - entry) / (entry - sl) : 0);
 
-   if(rrr >= 2.0)
-   {
-      PrintFormat("[Straight_Buy] RR %.2f >= 1:2 — market entry at %.5f", rrr, ask);
-      bool ok = PlaceBuy(ask, sl, tp, "Straight_Buy");
-      if(ok) g_StraightBuyDone = true;
-      return ok;
-   }
-
-   if(rrr < 1.5)
-   {
-      PrintFormat("[Straight_Buy] SKIP: RR %.2f < 1.5 at current price — insufficient quality", rrr);
-      return false;
-   }
-
-   // 1.5 <= RR < 1:2 → place BuyLimit at the price that gives exactly 1:2
-   double entry12 = (tp + 2.0 * sl) / 3.0;
-
-   if(entry12 <= sl || entry12 >= tp)
-   { PrintFormat("[Straight_Buy] SKIP: 1:2 entry level %.5f invalid (sl=%.5f tp=%.5f)", entry12, sl, tp); return false; }
-
-   PrintFormat("[Straight_Buy] RR %.2f — placing BuyLimit at 1:2 entry %.5f (sl=%.5f tp=%.5f)", rrr, entry12, sl, tp);
-   bool ok = PlaceBuy(entry12, sl, tp, "Straight_Buy");
+   bool ok = PlaceBuy(entry, sl, tp, "Straight_Buy");
    if(ok) g_StraightBuyDone = true;
    return ok;
 }
@@ -2596,12 +2560,11 @@ bool TryFVGSell()
 //   • Trigger: bar[1] closed bearish + prior 3 bars mostly bullish (pullback)
 //   • SL: nearest H1 swing high above entry (+ buffer)
 //   • TP: nearest H1 swing low below entry (no Asian Low requirement)
-// Straight Sell (v1.97 rework)
+// Straight Sell (v1.32 rework)
 // Trigger : Asian High broken first (01:00 ET onwards)
 //           + any candle 05:00–09:00 ET closes bearish
 //           + no FVG Sell has fired yet since 01:00 ET
-// Entry   : same 3-tier structure as FVG Buy/Sell — RR >= 2.0 enters at market now,
-//           1.5 <= RR < 2.0 places a SellLimit at the math-derived 1:2 price, RR < 1.5 skips
+// Entry   : market order immediately when bearish candle closes
 // SL      : highest high of bar[1] and bar[2] plus buffer
 // TP      : actual STL, fallback to lower of 3R or Asian Low
 bool TryStraightSell()
@@ -2626,67 +2589,45 @@ bool TryStraightSell()
 
    PrintFormat("[Straight_Sell] Trigger: bar[1] bearish close=%.5f open=%.5f at %d:00 ET", bar1Close, bar1Open, hourNY);
 
-   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double entry = SymbolInfoDouble(_Symbol, SYMBOL_BID);
 
    // SL = highest high of bar[1] and bar[2] plus buffer
    double high1 = iHigh(_Symbol, PERIOD_H1, 1);
    double high2 = iHigh(_Symbol, PERIOD_H1, 2);
    double sl    = MathMax(high1, high2) + PipsToPrice(InpFVGBuffer);
-   double tp    = GetSTLow(bid, InpSTH_Lookback);
+   double tp    = GetSTLow(entry, InpSTH_Lookback);
 
-   if(sl <= bid)
-   { PrintFormat("[Straight_Sell] SKIP: invalid SL %.5f vs entry %.5f", sl, bid); return false; }
+   if(sl <= entry)
+   { PrintFormat("[Straight_Sell] SKIP: invalid SL %.5f vs entry %.5f", sl, entry); return false; }
 
-   // TP = nearest post-Asian swing low; fallback to min(3R, Asian Low) if none found
-   if(tp > 0 && tp < bid)
+   // TP = nearest post-Asian swing low — use directly if RR >= 1.5
+   // Fallback to min(3R, Asian Low) only when no valid STL found
+   if(tp > 0 && tp < entry)
    {
-      PrintFormat("[Straight_Sell] TP set to swing low: %.5f", tp);
+      double rawRRR = (entry - tp) / (sl - entry);
+      if(rawRRR < 1.5)
+      { PrintFormat("[Straight_Sell] SKIP: STL RRR %.2f below 1.5 minimum", rawRRR); return false; }
+      PrintFormat("[Straight_Sell] STL RRR %.2f — TP set to swing low: %.5f", rawRRR, tp);
    }
    else
    {
-      double tp3R      = bid - 3.0 * (sl - bid);
-      double tpAsianLo = (g_AsianLow > 0 && g_AsianLow < bid) ? g_AsianLow : tp3R;
+      double tp3R      = entry - 3.0 * (sl - entry);
+      double tpAsianLo = (g_AsianLow > 0 && g_AsianLow < entry) ? g_AsianLow : tp3R;
       tp = MathMin(tp3R, tpAsianLo);
       PrintFormat("[Straight_Sell] No STL — fallback TP: 3R=%.5f AsianLow=%.5f → using %.5f", tp3R, tpAsianLo, tp);
    }
 
    // If all Asian candles were bullish → TP overridden to Asian Low
-   if(g_AllAsianBullish && g_AsianLow > 0 && g_AsianLow < bid)
+   if(g_AllAsianBullish && g_AsianLow > 0 && g_AsianLow < entry)
    {
       tp = g_AsianLow;
       PrintFormat("[Straight_Sell] All-bull Asian session — TP overridden to Asian Low: %.5f", tp);
    }
 
-   // v1.97: same 3-tier entry structure as TryFVGBuy/TryFVGSell — this function was still
-   // always entering at market regardless of RRR, only using the 1.5 threshold as a
-   // skip/no-skip gate. Now:
-   //   RR >= 2.0 at current market price → enter now, wherever price is
-   //   1.5 <= RR < 2.0 → SellLimit at a math-derived price giving exactly 1:2 RR
-   //   RR <  1.5 → skip
-   double rrr = (bid - tp) / (sl - bid);
+   PrintFormat("[Straight_Sell] entry=%.5f sl=%.5f tp=%.5f RRR=%.2f",
+               entry, sl, tp, (sl - entry > 0) ? (entry - tp) / (sl - entry) : 0);
 
-   if(rrr >= 2.0)
-   {
-      PrintFormat("[Straight_Sell] RR %.2f >= 1:2 — market entry at %.5f", rrr, bid);
-      bool ok = PlaceSell(bid, sl, tp, "Straight_Sell");
-      if(ok) g_StraightSellDone = true;
-      return ok;
-   }
-
-   if(rrr < 1.5)
-   {
-      PrintFormat("[Straight_Sell] SKIP: RR %.2f < 1.5 at current price — insufficient quality", rrr);
-      return false;
-   }
-
-   // 1.5 <= RR < 1:2 → place SellLimit at the price that gives exactly 1:2
-   double entry12 = (tp + 2.0 * sl) / 3.0;
-
-   if(entry12 >= sl || entry12 <= tp)
-   { PrintFormat("[Straight_Sell] SKIP: 1:2 entry level %.5f invalid (sl=%.5f tp=%.5f)", entry12, sl, tp); return false; }
-
-   PrintFormat("[Straight_Sell] RR %.2f — placing SellLimit at 1:2 entry %.5f (sl=%.5f tp=%.5f)", rrr, entry12, sl, tp);
-   bool ok = PlaceSell(entry12, sl, tp, "Straight_Sell");
+   bool ok = PlaceSell(entry, sl, tp, "Straight_Sell");
    if(ok) g_StraightSellDone = true;
    return ok;
 }
