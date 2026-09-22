@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //|                       NomShadoNgidi_EA.mq5                       |
 //|            Expert Advisor — Nomshado Ngidi Trading Plan          |
-//|           Instrument: US30 / US_30 / US.30  |  Version 1.101       |
+//|           Instrument: US30 / US_30 / US.30  |  Version 1.102       |
 //+------------------------------------------------------------------+
 //
 //  ⚠ THIS EA WILL ONLY RUN ON US_30 (also accepted: US.30, US30)
@@ -11,7 +11,19 @@
 //  BUY  → FVG Asian Buy | FVG Buy | Straight Buy
 //  SELL → FVG Asian Sell | FVG Sell | Straight Sell
 //
-//  v1.101 CHANGES (from v1.100):
+//  v1.102 CHANGES (from v1.101):
+//  • TryFVGBuy / TryFVGSell: removed the "RR < 1.5 → skip" branch. The tiered structure
+//    is now just RR >= 2.0 → market entry, otherwise → place a limit order at the
+//    math-derived 1:2 price (entry12), no matter how low RR is at the current market
+//    price. entry12 = (tp + 2*sl)/3 always evaluates to exactly 2.0 RR by construction,
+//    and provably always sits on the correct side of current price to be a genuine
+//    resting limit order whenever current-price RR < 2.0 — so there was no real setup
+//    quality being screened out by the old skip, just orders that would have otherwise
+//    sat waiting. Confirmed live: a bearish FVG with RR 0.66 at current price was being
+//    skipped entirely instead of leaving a SellLimit at the 1:2 level to wait.
+//  • Straight Buy / Straight Sell are unaffected — they don't have an entry12 tier and
+//    keep their existing single RR>=1.5 gate on the STH/STL path.
+//
 //  • Removed TryAsianSellReentryBuy and its CheckAsianSellSLReentry trigger entirely —
 //    the "re-enter BUY after FVG_Asian_Sell's SL is hit" mechanism is gone, along with
 //    the g_AsianSellSLHit/g_AsianSellReentered state it used. The six setup models listed
@@ -630,8 +642,8 @@
 //
 //+------------------------------------------------------------------+
 #property copyright   "Nomshado Ngidi"
-#property version     "1.101"
-#property description "MT5 EA — Nomshado Ngidi Trading Plan v1.101"
+#property version     "1.102"
+#property description "MT5 EA — Nomshado Ngidi Trading Plan v1.102"
 #property description "⚠ Instrument: US30 / US_30 / US.30 ONLY"
 #property description "Setups: FVG Buy/Sell, Asian FVG, Straight Buy/Sell"
 
@@ -2231,12 +2243,16 @@ bool TryFVGBuy()
 
    double sl = iLow(_Symbol, PERIOD_H1, fvgBar + 1) - PipsToPrice(InpFVGBuffer);
 
-   // v1.96: entry reverted to the original 3-tier structure confirmed as correct — the
+   // v1.96: entry reverted to the original tiered structure confirmed as correct — the
    // v1.90/v1.91 "wait for a retrace into the FVG zone" concept is removed entirely.
-   //   RR >= 2.0 at market  → enter now, wherever price is
-   //   1.5 <= RR < 2.0      → BuyLimit at a math-derived price giving exactly 1:2 RR
+   // v1.102: removed the RR < 1.5 skip. entry12 = (tp + 2*sl)/3 always evaluates to
+   // exactly 2.0 RR by construction, and whenever RR at the current price is below 2.0,
+   // entry12 is always below current ask (provable algebraically) — so it's always a
+   // valid resting BuyLimit, never an accidental BuyStop. No reason left to skip instead
+   // of just leaving the order to wait.
+   //   RR >= 2.0 at market → enter now, wherever price is
+   //   RR < 2.0            → BuyLimit at a math-derived price giving exactly 1:2 RR
    //                          (entry12 below) — not tied to the FVG zone itself
-   //   RR < 1.5             → skip
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    if(sl <= 0 || sl >= ask)
    { PrintFormat("[FVG_Buy] SKIP: invalid SL %.5f vs ask %.5f", sl, ask); return false; }
@@ -2273,14 +2289,7 @@ bool TryFVGBuy()
       return ok;
    }
 
-   // RR < 1.5 → setup quality too poor, skip
-   if(rrr < 1.5)
-   {
-      PrintFormat("[FVG_Buy] SKIP: RR %.2f < 1.5 at current price — insufficient quality", rrr);
-      return false;
-   }
-
-   // 1.5 <= RR < 1:2 → place BuyLimit at the price that gives exactly 1:2
+   // RR < 2.0 → place BuyLimit at the price that gives exactly 1:2
    // entry12 = (tp + 2*sl) / 3  →  gives reward:risk = 2.0 exactly
    double entry12 = (tp + 2.0 * sl) / 3.0;
 
@@ -2510,12 +2519,16 @@ bool TryFVGSell()
 
    double sl = iHigh(_Symbol, PERIOD_H1, fvgBar + 1) + PipsToPrice(InpFVGBuffer);
 
-   // v1.96: entry reverted to the original 3-tier structure confirmed as correct — the
+   // v1.96: entry reverted to the original tiered structure confirmed as correct — the
    // v1.90/v1.91 "wait for a retrace into the FVG zone" concept is removed entirely.
-   //   RR >= 2.0 at market  → enter now, wherever price is
-   //   1.5 <= RR < 2.0      → SellLimit at a math-derived price giving exactly 1:2 RR
+   // v1.102: removed the RR < 1.5 skip. entry12 = (tp + 2*sl)/3 always evaluates to
+   // exactly 2.0 RR by construction, and whenever RR at the current price is below 2.0,
+   // entry12 is always above current bid (provable algebraically) — so it's always a
+   // valid resting SellLimit, never an accidental SellStop. No reason left to skip
+   // instead of just leaving the order to wait.
+   //   RR >= 2.0 at market → enter now, wherever price is
+   //   RR < 2.0            → SellLimit at a math-derived price giving exactly 1:2 RR
    //                          (entry12 below) — not tied to the FVG zone itself
-   //   RR < 1.5             → skip
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    if(sl <= bid)
    { PrintFormat("[FVG_Sell] SKIP: invalid SL %.5f vs bid %.5f", sl, bid); return false; }
@@ -2549,14 +2562,7 @@ bool TryFVGSell()
       return ok;
    }
 
-   // RR < 1.5 → setup quality too poor, skip
-   if(rrr < 1.5)
-   {
-      PrintFormat("[FVG_Sell] SKIP: RR %.2f < 1.5 at current price — insufficient quality", rrr);
-      return false;
-   }
-
-   // 1.5 <= RR < 1:2 → place SellLimit at the price that gives exactly 1:2
+   // RR < 2.0 → place SellLimit at the price that gives exactly 1:2
    // entry12 = (tp + 2*sl) / 3  →  gives reward:risk = 2.0 exactly
    double entry12 = (tp + 2.0 * sl) / 3.0;
 
