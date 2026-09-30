@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //|                       NomShadoNgidi_EA.mq5                       |
 //|            Expert Advisor — Nomshado Ngidi Trading Plan          |
-//|           Instrument: US30 / US_30 / US.30  |  Version 1.102       |
+//|           Instrument: US30 / US_30 / US.30  |  Version 1.103       |
 //+------------------------------------------------------------------+
 //
 //  ⚠ THIS EA WILL ONLY RUN ON US_30 (also accepted: US.30, US30)
@@ -10,6 +10,16 @@
 //  SETUP MODELS IMPLEMENTED:
 //  BUY  → FVG Asian Buy | FVG Buy | Straight Buy
 //  SELL → FVG Asian Sell | FVG Sell | Straight Sell
+//
+//  v1.103 CHANGES (from v1.102):
+//  • New CheckPendingPastTP(), run every tick. If a BuyLimit/SellLimit pending order
+//    hasn't filled yet but price has already reached or passed that order's own TP
+//    level (without ever touching the entry), the anticipated move already happened
+//    without us — the order is cancelled and no further setups are taken for the rest
+//    of the day (g_DailyCount forced to InpMaxDailyTrades). This matters more now that
+//    v1.102 always places the 1:2 limit order instead of skipping poor-RR setups —
+//    those orders can sit far from a TP that's already close, so this catches the case
+//    where price runs straight through the target before the order ever gets filled.
 //
 //  v1.102 CHANGES (from v1.101):
 //  • TryFVGBuy / TryFVGSell: removed the "RR < 1.5 → skip" branch. The tiered structure
@@ -642,8 +652,8 @@
 //
 //+------------------------------------------------------------------+
 #property copyright   "Nomshado Ngidi"
-#property version     "1.102"
-#property description "MT5 EA — Nomshado Ngidi Trading Plan v1.102"
+#property version     "1.103"
+#property description "MT5 EA — Nomshado Ngidi Trading Plan v1.103"
 #property description "⚠ Instrument: US30 / US_30 / US.30 ONLY"
 #property description "Setups: FVG Buy/Sell, Asian FVG, Straight Buy/Sell"
 
@@ -1001,6 +1011,47 @@ void CheckBreakEvenMidpoint()
    }
 }
 
+// CheckPendingPastTP (v1.103)
+// If a BuyLimit/SellLimit pending order hasn't been filled yet, but price has already
+// moved past that order's own TP level without ever touching the entry, the anticipated
+// move already played out without us — leaving the order resting no longer makes sense.
+// Cancel it and block every other setup for the rest of the day (the day's opportunity
+// is gone, not just this one order).
+void CheckPendingPastTP()
+{
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket == 0) continue;
+      if(OrderGetString(ORDER_SYMBOL)      != _Symbol)       continue;
+      if((int)OrderGetInteger(ORDER_MAGIC) != InpMagicNumber) continue;
+
+      ENUM_ORDER_TYPE otype = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
+      if(otype != ORDER_TYPE_BUY_LIMIT && otype != ORDER_TYPE_SELL_LIMIT) continue;
+
+      double tp = OrderGetDouble(ORDER_TP);
+      if(tp <= 0) continue;
+
+      bool pastTP = false;
+      if(otype == ORDER_TYPE_SELL_LIMIT)
+         pastTP = (SymbolInfoDouble(_Symbol, SYMBOL_BID) <= tp);
+      else // ORDER_TYPE_BUY_LIMIT
+         pastTP = (SymbolInfoDouble(_Symbol, SYMBOL_ASK) >= tp);
+
+      if(!pastTP) continue;
+
+      string label = OrderGetString(ORDER_COMMENT);
+      if(trade.OrderDelete(ticket))
+      {
+         PrintFormat("[PastTP] Ticket #%I64u (%s) cancelled — price already reached TP %.5f before entry filled. No more trades today.",
+                     ticket, label, tp);
+         g_DailyCount = InpMaxDailyTrades;
+      }
+      else
+         PrintFormat("[PastTP] FAILED to cancel ticket #%I64u — error %d", ticket, GetLastError());
+   }
+}
+
 // CheckBreakEvenOvernight (v1.31)
 // If any open trade was opened on a PREVIOUS trading day:
 //   in profit → move SL to entry price (break even)
@@ -1148,6 +1199,7 @@ void OnTick()
 {
    CheckBreakEvenOvernight();
    CheckBreakEvenMidpoint();
+   CheckPendingPastTP();
    CheckScaleIn();
    CheckBalanceAlerts();
 
