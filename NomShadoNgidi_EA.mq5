@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //|                       NomShadoNgidi_EA.mq5                       |
 //|            Expert Advisor — Nomshado Ngidi Trading Plan          |
-//|           Instrument: US30 / US_30 / US.30  |  Version 1.103       |
+//|           Instrument: US30 / US_30 / US.30  |  Version 1.104       |
 //+------------------------------------------------------------------+
 //
 //  ⚠ THIS EA WILL ONLY RUN ON US_30 (also accepted: US.30, US30)
@@ -10,6 +10,18 @@
 //  SETUP MODELS IMPLEMENTED:
 //  BUY  → FVG Asian Buy | FVG Buy | Straight Buy
 //  SELL → FVG Asian Sell | FVG Sell | Straight Sell
+//
+//  v1.104 CHANGES (from v1.103):
+//  • TryFVGBuy / TryFVGSell: the FVG scan now rejects any gap candle that closed BEFORE
+//    the bar that actually broke the Asian Low/High. Previously the scan only checked
+//    that AsianBreakDirection() currently agrees with the setup's direction, then
+//    independently searched the whole 02:00-09:00 ET window for the most recent
+//    qualifying gap — with no check on whether that gap existed before the break was
+//    even confirmed. Confirmed live: a bearish FVG at 02:00 ET fired as FVG_Sell even
+//    though Asian High didn't actually break until the 04:00 ET candle, two hours later
+//    — trading an imbalance that predates its own directional signal. AsianBreakDirection
+//    now records the break bar's time (g_AsianBreakBarTime) and both scans skip any
+//    candidate gap candle older than that.
 //
 //  v1.103 CHANGES (from v1.102):
 //  • New CheckPendingPastTP(), run every tick. If a BuyLimit/SellLimit pending order
@@ -652,8 +664,8 @@
 //
 //+------------------------------------------------------------------+
 #property copyright   "Nomshado Ngidi"
-#property version     "1.103"
-#property description "MT5 EA — Nomshado Ngidi Trading Plan v1.103"
+#property version     "1.104"
+#property description "MT5 EA — Nomshado Ngidi Trading Plan v1.104"
 #property description "⚠ Instrument: US30 / US_30 / US.30 ONLY"
 #property description "Setups: FVG Buy/Sell, Asian FVG, Straight Buy/Sell"
 
@@ -744,6 +756,7 @@ bool     g_AsianFVGBearish  = false;
 bool     g_AllAsianBearish  = false;
 int      g_AsianLastBar     = -1;
 datetime g_AsianDate        = 0;
+datetime g_AsianBreakBarTime = 0;  // v1.104: time of the bar that actually broke Asian High/Low
 
 bool     g_BalanceLowAlertSent = false;
 bool     g_Milestone1k         = false;
@@ -1814,6 +1827,7 @@ bool HasOpenPosition()
 // v1.74: when a single bar breaks BOTH levels, bar close is used to determine direction
 int AsianBreakDirection()
 {
+   g_AsianBreakBarTime = 0;
    if(g_AsianHigh <= 0 || g_AsianLow <= 0) return 0;
 
    datetime todayMid = TodayMidnight();
@@ -1865,11 +1879,13 @@ int AsianBreakDirection()
             {
                PrintFormat("[AsianBreak] Bar[%d] swept Low, closed above Asian High (%.2f) → SELL direction", i, barClose);
                firstIsHigh = true;
+               g_AsianBreakBarTime = BarTimeNY(i);
             }
             else if(barClose < g_AsianLow)
             {
                PrintFormat("[AsianBreak] Bar[%d] swept High, closed below Asian Low (%.2f) → BUY direction", i, barClose);
                firstIsLow = true;
+               g_AsianBreakBarTime = BarTimeNY(i);
             }
             else
             {
@@ -1882,8 +1898,8 @@ int AsianBreakDirection()
 
       if(!firstIsLow && !firstIsHigh)
       {
-         if(brokeLow)  { PrintFormat("[AsianBreak] Asian Low broken at bar[%d] %02d:00 ET → BUY",  i, dbDt.hour); firstIsLow  = true; }
-         if(brokeHigh) { PrintFormat("[AsianBreak] Asian High broken at bar[%d] %02d:00 ET → SELL", i, dbDt.hour); firstIsHigh = true; }
+         if(brokeLow)  { PrintFormat("[AsianBreak] Asian Low broken at bar[%d] %02d:00 ET → BUY",  i, dbDt.hour); firstIsLow  = true; g_AsianBreakBarTime = BarTimeNY(i); }
+         if(brokeHigh) { PrintFormat("[AsianBreak] Asian High broken at bar[%d] %02d:00 ET → SELL", i, dbDt.hour); firstIsHigh = true; g_AsianBreakBarTime = BarTimeNY(i); }
       }
    }
 
@@ -2252,6 +2268,15 @@ bool TryFVGBuy()
       if(barDay < todayMid) break;
       if(bDt.hour < 2 || bDt.hour > 9) continue;
 
+      // v1.104: the gap candle must close at or after the bar that actually broke the
+      // Asian Low — a gap that formed BEFORE the break happened isn't part of the
+      // breakout move at all, it predates the direction being confirmed.
+      if(barTimeET < g_AsianBreakBarTime)
+      {
+         PrintFormat("[FVG_Buy] bar[%d] %02d:00 ET: before the Asian Low break — skipping", i, bDt.hour);
+         continue;
+      }
+
       // v1.93: gap check now uses candle 2's CLOSE, not its body-top/bottom (MathMax/Min of
       // open+close). A candle that opens back inside candle 1's range and only closes
       // beyond it (e.g. opens below, closes above) still leaves the zone above candle 1's
@@ -2527,6 +2552,18 @@ bool TryFVGSell()
       datetime barDay = barTimeET - bDt.hour * 3600 - bDt.min * 60 - bDt.sec;
       if(barDay < todayMid) break;
       if(bDt.hour < 2 || bDt.hour > 9) continue;
+
+      // v1.104: the gap candle must close at or after the bar that actually broke the
+      // Asian High — a gap that formed BEFORE the break happened isn't part of the
+      // breakout move at all, it predates the direction being confirmed. Confirmed live:
+      // a bearish FVG at 02:00 ET fired as FVG_Sell even though Asian High didn't
+      // actually break until the 04:00 ET candle — trading a gap that predates its own
+      // directional signal.
+      if(barTimeET < g_AsianBreakBarTime)
+      {
+         PrintFormat("[FVG_Sell] bar[%d] %02d:00 ET: before the Asian High break — skipping", i, bDt.hour);
+         continue;
+      }
 
       // v1.93: gap check now uses candle 2's CLOSE, not its body-top/bottom (MathMax/Min of
       // open+close). A candle that opens back inside candle 1's range and only closes
