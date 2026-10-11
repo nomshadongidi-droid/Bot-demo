@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //|                       NomShadoNgidi_EA.mq5                       |
 //|            Expert Advisor — Nomshado Ngidi Trading Plan          |
-//|           Instrument: US30 / US_30 / US.30  |  Version 1.104       |
+//|           Instrument: US30 / US_30 / US.30  |  Version 1.105       |
 //+------------------------------------------------------------------+
 //
 //  ⚠ THIS EA WILL ONLY RUN ON US_30 (also accepted: US.30, US30)
@@ -10,6 +10,19 @@
 //  SETUP MODELS IMPLEMENTED:
 //  BUY  → FVG Asian Buy | FVG Buy | Straight Buy
 //  SELL → FVG Asian Sell | FVG Sell | Straight Sell
+//
+//  v1.105 CHANGES (from v1.104):
+//  • TryFVGBuy / TryFVGSell: the gap-candle check now also requires the candle's own
+//    HIGH (bearish) / LOW (bullish) to have stayed on the correct side of the prior
+//    candle's wick for the whole candle — close alone is no longer enough. The v1.93
+//    close-only check correctly established THAT the candle ended up beyond the prior
+//    wick, but never verified the SAME candle didn't already wick back into that zone
+//    before closing — meaning a candle could trade back into the "gap" and still get
+//    counted as a clean, untouched imbalance. Confirmed live (ticket #951335): bar[3]'s
+//    close (51243.50) cleared bar[4]'s low (51297.50), but bar[3]'s own high (51320.50)
+//    had already traded back up above 51297.50 during that same candle — the zone was
+//    retraced into and filled before the candle even closed, so it was never a real FVG
+//    even though the close-only check said it was.
 //
 //  v1.104 CHANGES (from v1.103):
 //  • TryFVGBuy / TryFVGSell: the FVG scan now rejects any gap candle that closed BEFORE
@@ -664,8 +677,8 @@
 //
 //+------------------------------------------------------------------+
 #property copyright   "Nomshado Ngidi"
-#property version     "1.104"
-#property description "MT5 EA — Nomshado Ngidi Trading Plan v1.104"
+#property version     "1.105"
+#property description "MT5 EA — Nomshado Ngidi Trading Plan v1.105"
 #property description "⚠ Instrument: US30 / US_30 / US.30 ONLY"
 #property description "Setups: FVG Buy/Sell, Asian FVG, Straight Buy/Sell"
 
@@ -2282,15 +2295,26 @@ bool TryFVGBuy()
       // beyond it (e.g. opens below, closes above) still leaves the zone above candle 1's
       // high untouched until close — the open isn't relevant to whether that zone got
       // filled. Only the close (where the candle actually settled) matters.
+      // v1.105: that's necessary but not sufficient — the gap candle's own LOW must also
+      // have stayed above candle 1's high for the whole candle, otherwise the zone was
+      // retraced into and filled before the candle even closed, even though the
+      // close-only check said it was a clean gap. See the TryFVGSell mirror for the live
+      // example (ticket #951335) that caught this.
       double c3Close = iClose(_Symbol, PERIOD_H1, i);
       double c2High  = iHigh(_Symbol, PERIOD_H1, i + 1);
+      double c3Low   = iLow(_Symbol, PERIOD_H1, i);
 
-      if(c3Close > c2High)
+      if(c3Close > c2High && c3Low > c2High)
       {
          fvgBar = i;
          PrintFormat("[FVG_Buy] Bullish FVG at bar[%d] %02d:00 ET — close %.2f > bar[%d] high %.2f (gap %.2f pts)",
                      i, bDt.hour, c3Close, i+1, c2High, c3Close - c2High);
          break;
+      }
+      else if(c3Close > c2High)
+      {
+         PrintFormat("[FVG_Buy] bar[%d] %02d:00 ET: close %.2f > bar[%d] high %.2f but this candle's own low %.2f wicked back into the zone — not a clean FVG",
+                     i, bDt.hour, c3Close, i+1, c2High, c3Low);
       }
       else
       {
@@ -2570,15 +2594,28 @@ bool TryFVGSell()
       // beyond it (e.g. opens above, closes below) still leaves the zone below candle 1's
       // low untouched until close — the open isn't relevant to whether that zone got
       // filled. Only the close (where the candle actually settled) matters.
+      // v1.105: that's necessary but not sufficient — the gap candle's own HIGH must also
+      // have stayed below candle 1's low for the whole candle. Confirmed live (ticket
+      // #951335): bar[3]'s close (51243.50) cleared bar[4]'s low (51297.50), but bar[3]'s
+      // own high (51320.50) had already traded back up above 51297.50 during that same
+      // candle — the zone was retraced into and filled before the candle even closed, so
+      // it was never a genuine untouched imbalance, even though the close-only check said
+      // it was.
       double c3Close = iClose(_Symbol, PERIOD_H1, i);
       double c2Low   = iLow(_Symbol, PERIOD_H1, i + 1);
+      double c3High  = iHigh(_Symbol, PERIOD_H1, i);
 
-      if(c3Close < c2Low)
+      if(c3Close < c2Low && c3High < c2Low)
       {
          fvgBar = i;
          PrintFormat("[FVG_Sell] Bearish FVG at bar[%d] %02d:00 ET — close %.2f < bar[%d] low %.2f (gap %.2f pts)",
                      i, bDt.hour, c3Close, i+1, c2Low, c2Low - c3Close);
          break;
+      }
+      else if(c3Close < c2Low)
+      {
+         PrintFormat("[FVG_Sell] bar[%d] %02d:00 ET: close %.2f < bar[%d] low %.2f but this candle's own high %.2f wicked back into the zone — not a clean FVG",
+                     i, bDt.hour, c3Close, i+1, c2Low, c3High);
       }
       else
       {
